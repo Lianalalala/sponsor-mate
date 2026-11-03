@@ -55,5 +55,6 @@ Notion 工作區是最新狀態的唯一依據。實作功能或做技術選擇�
 - 安裝新套件前先說明用途並徵求同意
 - 不要自行 commit 或 push，由使用者決定
 
-## 收工流程
-使用者說「今日專案已結束」「收工」時，依 `.claude/skills/wrap-up/SKILL.md` 的步驟處理。
+## 開工與收工流程
+- 使用者說「開工」時，依 `.claude/skills/start/SKILL.md` 的步驟處理。
+- 使用者說「今日專案已結束」「收工」時，依 `.claude/skills/wrap-up/SKILL.md` 的步驟處理。
