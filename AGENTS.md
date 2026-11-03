@@ -23,6 +23,14 @@ MVP 只有兩個模組：寄信模組、資料庫模組。不在 MVP 的功能�
 - 每次修改前先說明要改什麼、為什麼；改完說明改了哪些檔案
 - 給終端機指令時，依使用者的作業系統提供（Mac 用 Terminal，Windows 用 PowerShell）
 
+## Notion 連結
+Notion 工作區是最新狀態的唯一依據。實作功能或做技術選擇前，先讀相關頁面。
+- 主頁「最強一人公關部 office」：https://app.notion.com/p/3f02685d18798047b3fcd41edf05d807
+- 決策紀錄 Decision Log：https://app.notion.com/p/3f42685d187981d48ab0c18c2caffeea
+- 系統架構 System Architecture：https://app.notion.com/p/3f42685d1879816e8378dd53a127cb8b
+- 專案進度表 Project Tracker：https://app.notion.com/p/e282685d18798341aa1f0120d87e5a2d
+- 開發日誌 Dev Log：https://app.notion.com/p/3fb2685d1879812ba29dc68b60a3711b
+
 ## 技術選型
 - Next.js（App Router，程式碼放根目錄 app/）、TypeScript、Tailwind CSS
 - 部署：Vercel（Hobby 方案），GitHub repo 為 public
@@ -46,3 +54,6 @@ MVP 只有兩個模組：寄信模組、資料庫模組。不在 MVP 的功能�
 - 一次只做一件小事，做完讓使用者確認再繼續
 - 安裝新套件前先說明用途並徵求同意
 - 不要自行 commit 或 push，由使用者決定
+
+## 收工流程
+使用者說「今日專案已結束」「收工」時，依 `.claude/skills/wrap-up/SKILL.md` 的步驟處理。
