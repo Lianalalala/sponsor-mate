@@ -58,6 +58,8 @@ Notion 工作區是最新狀態的唯一依據。實作功能或做技術選擇�
 - 改完程式跑 `npm test`，確認規則沒被改壞（不呼叫 AI、不花錢）
 - push 前跑 `npm run build`，確認 Vercel 部署不會失敗
 - 不要自行 commit 或 push，由使用者決定
+- 採用 branch 模式：改程式前先開 branch，不直接在 `main` 上改，也不直接 push 到 `main`；
+  做完由使用者在 GitHub 開 Pull Request 合併回 `main`（步驟見開工、收工流程）
 
 ## 開工與收工流程
 - 使用者說「開工」時，依 `.claude/skills/start/SKILL.md` 的步驟處理。
