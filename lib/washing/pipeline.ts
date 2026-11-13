@@ -88,6 +88,8 @@ export interface WashedRow {
   /** 疑似重複群組的建議與證據（整組共用同一份）；不是疑似重複就是 null */
   duplicate: DuplicateAnalysis | null;
   owner: string;
+  /** 從⑤讀回來的待處理列才有：⑤的暫存ID（處理完要更新⑤那一列，不是新增） */
+  stagingId?: string;
   /** 舊資料的「已寄」都不是 Gmail API 成功紀錄 */
   countsAsGmailSent: false;
   /** AI 拆解結果被防呆捨棄或標為不確定的紀錄 */
@@ -319,6 +321,16 @@ export function washTable(
   const rows = withDuplicateAnalysis(grouped).map(finalizeRow);
 
   return { rows, excluded };
+}
+
+/** 重新找疑似重複群組（例如把⑤上次待處理的列和這一批放在一起時），再重算處置 */
+export function regroupDuplicates(rows: WashedRow[]): WashedRow[] {
+  const groups = findDuplicateGroups(
+    rows.map((row) => ({ id: row.rowNumber, vendorName: row.vendorName, email: row.email.value })),
+  );
+  return refreshDuplicates(
+    rows.map((row) => ({ ...row, duplicateGroup: groups.get(row.rowNumber) ?? null })),
+  );
 }
 
 type DuplicateFacts = Pick<

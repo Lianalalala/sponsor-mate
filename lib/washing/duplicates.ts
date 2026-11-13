@@ -12,6 +12,14 @@ export function vendorNameKey(name: string): string {
   return name.replace(/\s+/g, "").toLowerCase();
 }
 
+/** 兩筆是不是可能同一家：同名、同 Email、名稱互相包含。這一批之間、跟①既有廠商比對都用這一條 */
+export function looksLikeSameVendor(
+  a: { vendorName: string | null; email: string | null },
+  b: { vendorName: string | null; email: string | null },
+): boolean {
+  return isSuspectedDuplicate({ id: 0, ...a }, { id: 1, ...b });
+}
+
 function isSuspectedDuplicate(a: DuplicateInput, b: DuplicateInput): boolean {
   if (!a.vendorName || !b.vendorName) return false;
   const nameA = vendorNameKey(a.vendorName);

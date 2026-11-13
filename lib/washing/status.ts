@@ -63,7 +63,20 @@ const STATUS_RULES: Record<string, StatusRule> = {
   拒絕: REFUSED,
   已拒絕: REFUSED,
   婉拒: REFUSED,
+  // ③的狀態名稱本身；從⑤讀回待處理的列時，狀態候選就是這些字
+  "已寄出・尚未回覆": SENT_NOT_REPLIED,
+  "已回覆・待處理": REPLIED,
+  已同意合作: AGREED,
 };
+
+const UNCLEAR = /^待釐清（原文：([^]*)）$/;
+
+/** ⑤的「聯絡狀態候選」→ 可以再交給 interpretStatus 的原文 */
+export function statusRawFromLabel(label: string): string {
+  const unclear = UNCLEAR.exec(label);
+  if (!unclear) return label;
+  return unclear[1] === "空白" ? "" : unclear[1];
+}
 
 function normalizeStatusKey(raw: string): string {
   return raw.normalize("NFKC").replace(/\s+/g, "");

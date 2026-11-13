@@ -6,8 +6,9 @@ import { describe, it } from "node:test";
 import { MERGE_DECISIONS } from "../duplicates.ts";
 import { EMPTY_INTERPRETATION, type RowInterpretation } from "../interpretation.ts";
 import { refreshDuplicates, washTable, type ColumnMapping, type RawTable, type WashedRow } from "../pipeline.ts";
-import { applyMergeDecision, editDefaults, recheckRow, stagingRowsFor, type ReviewActions } from "../review.ts";
-import { STAGING_COLUMNS } from "../staging.ts";
+import { applyMergeDecision, editDefaults, recheckRow } from "../review.ts";
+import { STAGING_COLUMNS, toStagingRow } from "../staging.ts";
+import { EMPTY_CHOICES, reviewImport } from "../write-plan.ts";
 
 const headers = ["廠商", "聯絡", "日期", "狀態", "活動"];
 const mapping: ColumnMapping = {
@@ -52,8 +53,7 @@ describe("情況 ①：同一廠商、不同活動", () => {
 
   it("只是建議：處置是待人工覆核，⑤的合併決定留空", () => {
     for (const row of rows) assert.equal(row.disposition, "待人工覆核");
-    const actions: ReviewActions = { [rows[0].rowNumber]: "accepted", [rows[1].rowNumber]: "accepted" };
-    for (const staging of stagingRowsFor(rows, actions, context)) {
+    for (const staging of rows.map((row) => toStagingRow(row, context))) {
       assert.equal(cell(staging, "合併決定"), "");
       assert.match(String(cell(staging, "待確認原因")), /建議「同一廠商，往來紀錄都保留」/);
     }
@@ -159,17 +159,22 @@ describe("Golden Dataset 疑似重複", () => {
         "活動相同（系迎新）",
       ]);
     }
-    const actions: ReviewActions = { [byId("01").rowNumber]: "accepted", [byId("02").rowNumber]: "accepted" };
-    const staging = stagingRowsFor(rows, actions, context);
-    assert.equal(staging.length, 2, "兩筆都還在，沒有被合併掉");
+    const review = reviewImport(rows, EMPTY_CHOICES, { vendors: [], events: [], records: [], batch: context });
+    for (const id of ["01", "02"]) {
+      const result = review.rows.get(byId(id).rowNumber)!;
+      assert.equal(result.writable, false, "還沒選合併決定，不能寫入");
+      assert.ok(result.blockers.some((blocker) => blocker.kind === "合併決定"));
+    }
+    const staging = review.plan.staging.append.filter((line) => ["01", "02"].includes(String(cell(line, "舊序"))));
+    assert.equal(staging.length, 2, "兩筆都還在⑤，沒有被合併掉");
     for (const line of staging) assert.equal(cell(line, "合併決定"), "");
   });
 
   it("公關長選了合併決定 → 寫進同組每一筆的「合併決定」", () => {
     const group = byId("01").duplicateGroup!;
     const decisions = applyMergeDecision(rows, {}, group, "不同廠商，不合併");
-    const actions: ReviewActions = { [byId("01").rowNumber]: "accepted", [byId("05").rowNumber]: "accepted" };
-    const [first, single] = stagingRowsFor(rows, actions, context, decisions);
+    const first = toStagingRow(byId("01"), context, { mergeDecision: decisions[group] });
+    const single = toStagingRow(byId("05"), context, { mergeDecision: decisions[group] });
     assert.equal(cell(first, "合併決定"), "不同廠商，不合併");
     assert.equal(cell(single, "合併決定"), "", "不是疑似重複的列不填");
   });
