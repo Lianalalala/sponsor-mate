@@ -21,7 +21,7 @@ export function SignInButton() {
         setBusy(true);
         void authClient.signIn.social({
           provider: "google",
-          callbackURL: "/login",
+          callbackURL: "/",
           errorCallbackURL: "/login?error=1",
         });
       }}

@@ -3,11 +3,11 @@
 import { getWashingModel } from "@/lib/ai/model";
 import { suggestColumnMapping } from "@/lib/washing/ai";
 
-import { callAi, localOnly, pickSheet, readUpload } from "../shared";
+import { callAi, pickSheet, readUpload, washingEndpoint } from "@/lib/washing/http";
 
 const SAMPLES_PER_COLUMN = 3;
 
-export const POST = localOnly(async (request) => {
+export const POST = washingEndpoint(async (request) => {
   const upload = await readUpload(request);
   const { sheetIndex, sheet } = pickSheet(upload);
   const { table } = sheet;
@@ -27,4 +27,4 @@ export const POST = localOnly(async (request) => {
     ),
     suggestion,
   });
-});
+}, { localOnly: true });

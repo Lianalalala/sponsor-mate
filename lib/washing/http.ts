@@ -1,5 +1,12 @@
-import { isLocalRequest } from "@/lib/dev-only";
-import { readUploadedTable, UnsupportedFileError, type NamedTable } from "@/lib/washing/read-table";
+// Data washing machine 的 API 共用部分：權限檢查、讀上傳檔案、呼叫 AI、錯誤處理。
+// 只能在伺服器端 import。
+//
+// 檔案只在記憶體裡處理，不寫進硬碟、不存資料庫；回應送出後就丟掉，
+// 所以「洗完清掉伺服器暫存」不需要另外刪檔。錯誤紀錄也只記錯誤類型，不記內容。
+
+import { checkImportAccess, type ImportAccess } from "../current-member.ts";
+import { isLocalRequest } from "../dev-only.ts";
+import { readUploadedTable, UnsupportedFileError, type NamedTable } from "./read-table.ts";
 
 export class UserFacingError extends Error {
   readonly status: number;
@@ -44,17 +51,41 @@ export async function callAi<T>(call: () => Promise<T>): Promise<T> {
     return await call();
   } catch (error) {
     console.error("washing: AI 呼叫失敗", error instanceof Error ? error.name : "unknown");
-    throw new UserFacingError("AI 沒有回應。請確認 .env.local 的 ANTHROPIC_API_KEY，再試一次", 502);
+    throw new UserFacingError("AI 沒有回應，請稍後再試一次", 502);
   }
 }
 
-export function localOnly(
-  handler: (request: Request) => Promise<Response>,
+const DENIED_MESSAGE: Record<401 | 403, string> = {
+  401: "請先登入",
+  403: "只有公關長可以匯入舊資料",
+};
+
+export interface WashingEndpointOptions {
+  /** 本機開發工具（/dev/washing）：部署後關閉，只接受 localhost */
+  localOnly?: boolean;
+  /** 測試用：換掉讀 session 的方式 */
+  checkAccess?: (headers: Headers) => Promise<ImportAccess>;
+}
+
+type Handler = (request: Request, access: Extract<ImportAccess, { allowed: true }>) => Promise<Response>;
+
+/**
+ * 包住每個清洗相關的 API。順序很重要：
+ * 先檢查 localhost（本機工具）→ 再驗證 session 與公關長角色 → 通過才執行 handler。
+ * 沒通過時 handler 完全不會執行，所以讀不到上傳的檔案，也呼叫不到 AI。
+ */
+export function washingEndpoint(
+  handler: Handler,
+  { localOnly = false, checkAccess = checkImportAccess }: WashingEndpointOptions = {},
 ): (request: Request) => Promise<Response> {
   return async (request) => {
-    if (!isLocalRequest(request)) return new Response(null, { status: 404 });
+    if (localOnly && !isLocalRequest(request)) return new Response(null, { status: 404 });
     try {
-      return await handler(request);
+      const access = await checkAccess(request.headers);
+      if (!access.allowed) {
+        return Response.json({ error: DENIED_MESSAGE[access.status] }, { status: access.status });
+      }
+      return await handler(request, access);
     } catch (error) {
       if (error instanceof UserFacingError) {
         return Response.json({ error: error.message }, { status: error.status });

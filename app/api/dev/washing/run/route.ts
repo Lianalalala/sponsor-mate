@@ -4,7 +4,7 @@ import { getWashingModel } from "@/lib/ai/model";
 import { collectCells, interpretCells } from "@/lib/washing/ai";
 import { washTable, type ColumnMapping, type WashField } from "@/lib/washing/pipeline";
 
-import { callAi, localOnly, pickSheet, readUpload, UserFacingError } from "../shared";
+import { callAi, pickSheet, readUpload, UserFacingError, washingEndpoint } from "@/lib/washing/http";
 
 const WASH_FIELDS: readonly WashField[] = [
   "legacyId",
@@ -38,7 +38,7 @@ function parseMapping(raw: FormDataEntryValue | null): ColumnMapping {
   return mapping;
 }
 
-export const POST = localOnly(async (request) => {
+export const POST = washingEndpoint(async (request) => {
   const upload = await readUpload(request);
   const { sheet } = pickSheet(upload);
   const mapping = parseMapping(upload.form.get("mapping"));
@@ -56,4 +56,4 @@ export const POST = localOnly(async (request) => {
   const { rows, excluded } = washTable(sheet.table, mapping, interpretations);
 
   return Response.json({ headers: sheet.table.headers, rows, excluded, missingRows });
-});
+}, { localOnly: true });
