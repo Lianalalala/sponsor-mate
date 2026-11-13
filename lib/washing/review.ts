@@ -4,6 +4,7 @@
 // 之後做「寫入⑤」時，伺服器端要用同一份 recheckRow／canConfirm 再檢查一次，
 // 不能只相信瀏覽器送來的確認結果。
 
+import { isContactMethod, type ContactMethod } from "./contact.ts";
 import { cleanDate } from "./date.ts";
 import { MERGE_DECISIONS, type MergeDecision } from "./duplicates.ts";
 import { cleanEmail } from "./email.ts";
@@ -56,14 +57,22 @@ export function applyAction(
 
 export interface RowEdit {
   vendorName: string;
+  /** 空字串＝待確認 */
+  contactMethod: ContactMethod | "";
+  /** 主要聯絡方式是 Email 時不使用 */
+  contactInfo: string;
   email: string;
+  contactNote: string;
   contactDate: string;
 }
 
 export function editDefaults(row: WashedRow): RowEdit {
   return {
     vendorName: row.vendorName ?? "",
+    contactMethod: row.contactMethod ?? "",
+    contactInfo: row.contactInfo,
     email: row.email.value ?? "",
+    contactNote: row.contactNote,
     contactDate: row.date.iso ?? "",
   };
 }
@@ -75,9 +84,14 @@ export function editDefaults(row: WashedRow): RowEdit {
  */
 export function recheckRow(row: WashedRow, edit: RowEdit): WashedRow {
   const vendorName = cleanVendorName(edit.vendorName);
+  const contactMethod = isContactMethod(edit.contactMethod) ? edit.contactMethod : null;
   const facts = {
     ...row,
     vendorName,
+    contactMethod,
+    // 選 Email 時不使用主要聯絡資訊（D-024），畫面上也不顯示這一欄
+    contactInfo: contactMethod === "Email" ? "" : edit.contactInfo.trim(),
+    contactNote: edit.contactNote.trim(),
     email: cleanEmail(edit.email),
     date: cleanDate(edit.contactDate),
     status: deriveStatus(row.statusRaw, vendorName, row.vendorStopContact),
@@ -120,13 +134,24 @@ export function orderForReview(rows: WashedRow[]): ReviewSection[] {
   return sections;
 }
 
-export type ReviewField = "廠商名稱" | "Email" | "聯絡日期" | "聯絡窗口" | "聯絡狀態" | "贊助內容";
+export type ReviewField =
+  | "廠商名稱"
+  | "主要聯絡方式"
+  | "主要聯絡資訊"
+  | "Email"
+  | "聯絡日期"
+  | "聯絡窗口"
+  | "聯絡狀態"
+  | "贊助內容";
 
 /** 需要公關長特別看的欄位，畫面上要明顯標出 */
 export function flaggedFields(row: WashedRow): Set<ReviewField> {
   const flagged = new Set<ReviewField>();
   if (!row.vendorName) flagged.add("廠商名稱");
-  if (row.email.check !== "valid") flagged.add("Email");
+  if (row.contactMethod === null) flagged.add("主要聯絡方式");
+  if (row.contactMethod !== null && row.contactMethod !== "Email" && !row.contactInfo) flagged.add("主要聯絡資訊");
+  const emailMatters = row.contactMethod === "Email" || row.email.check !== "missing";
+  if (row.email.check !== "valid" && emailMatters) flagged.add("Email");
   if (row.date.check !== "valid") flagged.add("聯絡日期");
   if (row.contactValidity === "replaced") flagged.add("聯絡窗口");
   if (!row.status.adoptable) flagged.add("聯絡狀態");

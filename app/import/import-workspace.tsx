@@ -6,6 +6,7 @@
 
 import { useState, type FormEvent } from "react";
 
+import { CONTACT_METHODS, type ContactMethod } from "@/lib/washing/contact";
 import { MERGE_DECISIONS, type DuplicateAnalysis, type MergeDecision } from "@/lib/washing/duplicates";
 import type { ImportDisposition, WashField, WashedRow } from "@/lib/washing/pipeline";
 import {
@@ -329,10 +330,51 @@ function rawFor(row: WashedRow, headers: string[], fields: (WashField | "")[], f
 }
 
 interface Comparison {
-  label: ReviewField | "其他聯絡管道" | "舊活動" | "原負責人";
+  label: ReviewField | "其他聯絡管道" | "聯絡備註" | "舊活動" | "原負責人";
   raw: string;
   value: string;
   note?: string;
+  /** 同一個原始值拆成好幾個欄位時，原始值只顯示一次（跨幾列） */
+  rawRowSpan?: number;
+  /** 原始值已經由上面那一列顯示 */
+  rawShared?: boolean;
+}
+
+/** 「聯絡資料」那一格會被拆成好幾個欄位；原始值只在第一列顯示一次 */
+function contactComparisons(row: WashedRow, contactRaw: string): Comparison[] {
+  const { interpretation } = row;
+  const emailMatters = row.contactMethod === "Email" || row.email.check !== "missing";
+  const items: Comparison[] = [
+    {
+      label: "主要聯絡方式",
+      raw: contactRaw,
+      value: row.contactMethod ?? "",
+      note: row.contactMethod === null ? "待確認" : row.contactMethod === "Email" ? "有效 Email，程式直接選" : "AI 判斷",
+    },
+  ];
+  // 選 Email 時不顯示主要聯絡資訊（D-024）
+  if (row.contactMethod !== "Email") {
+    items.push({ label: "主要聯絡資訊", raw: contactRaw, value: row.contactInfo });
+  }
+  items.push(
+    {
+      label: "Email",
+      raw: contactRaw,
+      value: row.email.value ?? "",
+      note: row.email.check === "valid" || !emailMatters ? "" : row.email.note,
+    },
+    {
+      label: "聯絡窗口",
+      raw: contactRaw,
+      value: interpretation.contactPerson ?? "",
+      note: VALIDITY_LABEL[row.contactValidity],
+    },
+    { label: "其他聯絡管道", raw: contactRaw, value: interpretation.otherChannels ?? "" },
+  );
+  if (row.contactNote) items.push({ label: "聯絡備註", raw: contactRaw, value: row.contactNote });
+  return items.map((item, index) =>
+    index === 0 ? { ...item, rawRowSpan: items.length } : { ...item, rawShared: true },
+  );
 }
 
 function comparisons(row: WashedRow, headers: string[], fields: (WashField | "")[]): Comparison[] {
@@ -340,19 +382,7 @@ function comparisons(row: WashedRow, headers: string[], fields: (WashField | "")
   const { interpretation } = row;
   return [
     { label: "廠商名稱", raw: raw("vendorName"), value: row.vendorName ?? "" },
-    {
-      label: "Email",
-      raw: raw("contact"),
-      value: row.email.value ?? "",
-      note: row.email.check === "valid" ? "" : row.email.note,
-    },
-    {
-      label: "聯絡窗口",
-      raw: raw("contact"),
-      value: interpretation.contactPerson ?? "",
-      note: VALIDITY_LABEL[row.contactValidity],
-    },
-    { label: "其他聯絡管道", raw: raw("contact"), value: interpretation.otherChannels ?? "" },
+    ...contactComparisons(row, raw("contact")),
     {
       label: "聯絡日期",
       raw: raw("contactDate"),
@@ -454,6 +484,7 @@ function RowCard({
 }) {
   const [editing, setEditing] = useState(false);
   const [recheckFailed, setRecheckFailed] = useState(false);
+  const [editMethod, setEditMethod] = useState<ContactMethod | "">(row.contactMethod ?? "");
   const style = DISPOSITION_STYLE[row.disposition];
   const flagged = flaggedFields(row);
   const confirmable = canConfirm(row);
@@ -464,7 +495,10 @@ function RowCard({
     const form = new FormData(event.currentTarget);
     const result = onSaveEdit({
       vendorName: String(form.get("vendorName") ?? ""),
+      contactMethod: editMethod,
+      contactInfo: String(form.get("contactInfo") ?? ""),
       email: String(form.get("email") ?? ""),
+      contactNote: String(form.get("contactNote") ?? ""),
       contactDate: String(form.get("contactDate") ?? ""),
     });
     const passed = canConfirm(result);
@@ -514,7 +548,7 @@ function RowCard({
               </tr>
             </thead>
             <tbody>
-              {comparisons(row, headers, fields).map(({ label, raw, value, note }) => {
+              {comparisons(row, headers, fields).map(({ label, raw, value, note, rawRowSpan, rawShared }) => {
                 const isFlagged = flagged.has(label as ReviewField);
                 return (
                   <tr key={label} className={`border-t border-[#E3EDF0] ${isFlagged ? "bg-[#FFF3C4]" : ""}`}>
@@ -524,8 +558,18 @@ function RowCard({
                         <span className="ml-1 rounded bg-[#E0A100] px-1 text-xs font-semibold text-[#3B2D00]">待確認</span>
                       )}
                     </th>
-                    <td className="min-w-0 break-words py-1.5 pr-2 align-top text-[#5F7C86]">{raw || "（空白）"}</td>
-                    <td aria-hidden="true" className="py-1.5 align-top text-[#8AA2AA]">→</td>
+                    {!rawShared && (
+                      <td
+                        rowSpan={rawRowSpan}
+                        className="min-w-0 break-words border-r border-[#E3EDF0] bg-white py-1.5 pr-2 align-top text-[#5F7C86]"
+                      >
+                        {raw || "（空白）"}
+                        {rawRowSpan && rawRowSpan > 1 && (
+                          <span className="mt-0.5 block text-xs text-[#8AA2AA]">這一格拆成右邊 {rawRowSpan} 個欄位</span>
+                        )}
+                      </td>
+                    )}
+                    <td aria-hidden="true" className="py-1.5 pl-2 align-top text-[#8AA2AA]">→</td>
                     <td className="min-w-0 break-words py-1.5 align-top">
                       <span className="font-medium">{value}</span>
                       {note && <span className="ml-2 text-sm text-[#8A6100]">{note}</span>}
@@ -550,7 +594,37 @@ function RowCard({
             <p className="text-[15px] text-[#46636D]">補好資料後按「重新檢查」，通過才會確認。</p>
             <div className="mt-2 grid gap-3 md:grid-cols-3">
               <EditField name="vendorName" label="廠商名稱" defaultValue={editDefaults(row).vendorName} />
-              <EditField name="email" label="Email" defaultValue={editDefaults(row).email} type="email" />
+              <label className="flex flex-col gap-1 text-[15px]">
+                主要聯絡方式
+                <select
+                  name="contactMethod"
+                  value={editMethod}
+                  onChange={(event) => setEditMethod(event.target.value as ContactMethod | "")}
+                  className="rounded-md border border-[#7FA6B3] bg-white px-2 py-1.5 focus-visible:outline-2 focus-visible:outline-[#0F5C73]"
+                >
+                  <option value="">待確認</option>
+                  {CONTACT_METHODS.map((method) => (
+                    <option key={method} value={method}>
+                      {method}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {editMethod !== "Email" && (
+                <EditField
+                  name="contactInfo"
+                  label="主要聯絡資訊"
+                  defaultValue={editDefaults(row).contactInfo}
+                  placeholder="例如 LINE ID、表單網址"
+                />
+              )}
+              <EditField name="email" label="Email（寄信只用這欄）" defaultValue={editDefaults(row).email} type="email" />
+              <EditField
+                name="contactNote"
+                label="聯絡備註"
+                defaultValue={editDefaults(row).contactNote}
+                placeholder="例如：要跟上一屆要 LINE"
+              />
               <EditField name="contactDate" label="聯絡日期" defaultValue={editDefaults(row).contactDate} placeholder="2025-09-15" />
             </div>
             {recheckFailed && (
@@ -591,7 +665,15 @@ function RowCard({
               >
                 接受
               </button>
-              <button type="button" className={buttonQuiet} onClick={() => setEditing(true)} disabled={editing}>
+              <button
+                type="button"
+                className={buttonQuiet}
+                onClick={() => {
+                  setEditMethod(row.contactMethod ?? "");
+                  setEditing(true);
+                }}
+                disabled={editing}
+              >
                 編輯後確認
               </button>
               <button type="button" className={buttonQuiet} onClick={() => onAction("skipped")}>
@@ -639,7 +721,7 @@ function StagingPreview({ staging }: { staging: ReturnType<typeof stagingRowsFor
   return (
     <details className="mt-8 bg-white">
       <summary className="cursor-pointer px-4 py-3 font-medium text-[#0F5C73] focus-visible:outline-2 focus-visible:outline-[#0F5C73]">
-        預覽要放進⑤舊資料暫存的內容（已確認 {staging.length} 筆，32 欄）
+        預覽要放進⑤舊資料暫存的內容（已確認 {staging.length} 筆，{STAGING_COLUMNS.length} 欄）
       </summary>
       {staging.length === 0 ? (
         <p className="px-4 pb-4 text-[#46636D]">還沒有確認的資料。</p>

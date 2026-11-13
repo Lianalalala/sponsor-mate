@@ -6,7 +6,7 @@ import { describe, it } from "node:test";
 import { MERGE_DECISIONS } from "../duplicates.ts";
 import { EMPTY_INTERPRETATION, type RowInterpretation } from "../interpretation.ts";
 import { refreshDuplicates, washTable, type ColumnMapping, type RawTable, type WashedRow } from "../pipeline.ts";
-import { applyMergeDecision, recheckRow, stagingRowsFor, type ReviewActions } from "../review.ts";
+import { applyMergeDecision, editDefaults, recheckRow, stagingRowsFor, type ReviewActions } from "../review.ts";
 import { STAGING_COLUMNS } from "../staging.ts";
 
 const headers = ["廠商", "聯絡", "日期", "狀態", "活動"];
@@ -185,7 +185,7 @@ describe("Golden Dataset 疑似重複", () => {
   });
 
   it("把 02 改名成「全家便利商店」後重新分析 → 同組變成名稱相同，建議情況 ②", () => {
-    const edited = recheckRow(byId("02"), { vendorName: "全家便利商店", email: "family-team@example.com", contactDate: "2025-09-15" });
+    const edited = recheckRow(byId("02"), { ...editDefaults(byId("02")), vendorName: "全家便利商店" });
     const refreshed = refreshDuplicates(rows.map((row) => (row.rowNumber === edited.rowNumber ? edited : row)));
     const first = refreshed.find((row) => row.legacyId === "01")!;
     assert.equal(first.duplicate?.suggestion, "同一筆紀錄重複，只留一筆");

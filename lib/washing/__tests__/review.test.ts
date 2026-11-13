@@ -50,12 +50,12 @@ const context = {
 };
 
 describe("預覽頁統計", () => {
-  it("四種處置各幾筆：7／2／1／2", () => {
+  it("四種處置各幾筆：8／2／1／1", () => {
     assert.deepEqual(countByDisposition(rows), {
       可暫存: 2,
       "可暫存／禁止聯絡": 1,
-      待人工覆核: 7,
-      阻擋正式匯入: 2,
+      待人工覆核: 8,
+      阻擋正式匯入: 1,
     });
   });
 });
@@ -89,16 +89,15 @@ describe("疑似重複排在一起", () => {
 });
 
 describe("阻擋正式匯入的列不能確認", () => {
-  it("07、08 不能接受", () => {
+  it("07 不能接受", () => {
     assert.equal(canConfirm(row("07")), false);
-    assert.equal(canConfirm(row("08")), false);
     const actions = applyAction(rows, {}, row("07").rowNumber, "accepted");
     assert.equal(actions[row("07").rowNumber], undefined);
   });
 
   it("但可以選「不匯入」", () => {
-    const actions = applyAction(rows, {}, row("08").rowNumber, "skipped");
-    assert.equal(actions[row("08").rowNumber], "skipped");
+    const actions = applyAction(rows, {}, row("07").rowNumber, "skipped");
+    assert.equal(actions[row("07").rowNumber], "skipped");
   });
 
   it("整批接受只包含可暫存的列，不含阻擋和待人工覆核", () => {
@@ -121,9 +120,10 @@ describe("阻擋正式匯入的列不能確認", () => {
 });
 
 describe("編輯後重新檢查", () => {
-  it("08 補上有效 Email 和日期後不再被阻擋", () => {
+  it("08 選 Email、補上有效 Email 和日期後可以確認", () => {
     const fixed = recheckRow(row("08"), {
       ...editDefaults(row("08")),
+      contactMethod: "Email",
       email: "hello@lifestyle.example.com",
       contactDate: "2025-09-30",
     });
@@ -133,13 +133,41 @@ describe("編輯後重新檢查", () => {
     assert.equal(canConfirm(fixed), true);
   });
 
-  it("08 只補日期、Email 還是無效：仍然阻擋", () => {
+  it("08 選 Email 但 Email 還是無效：阻擋", () => {
     const stillBroken = recheckRow(row("08"), {
       ...editDefaults(row("08")),
+      contactMethod: "Email",
       email: "lifestyle.example.com",
       contactDate: "2025-09-30",
     });
     assert.equal(stillBroken.disposition, "阻擋正式匯入");
+  });
+
+  it("08 選官網表單、填網址 → 不阻擋；選了卻沒填資訊 → 阻擋", () => {
+    const website = recheckRow(row("08"), {
+      ...editDefaults(row("08")),
+      contactMethod: "官網表單",
+      contactInfo: "lifestyle.example.com",
+    });
+    assert.equal(website.contactMethod, "官網表單");
+    assert.equal(website.contactInfo, "lifestyle.example.com");
+    assert.notEqual(website.disposition, "阻擋正式匯入");
+    assert.ok(!website.reviewReasons.includes("主要聯絡方式待確認"));
+
+    const empty = recheckRow(row("08"), { ...editDefaults(row("08")), contactMethod: "LINE", contactInfo: " " });
+    assert.equal(empty.disposition, "阻擋正式匯入");
+    assert.ok(empty.reviewReasons.includes("主要聯絡方式是 LINE，主要聯絡資訊不能空白"));
+  });
+
+  it("選 Email 時不保留主要聯絡資訊；聯絡備註會留下", () => {
+    const edited = recheckRow(row("05"), {
+      ...editDefaults(row("05")),
+      contactMethod: "Email",
+      contactInfo: "不該留下",
+      contactNote: "要跟上一屆要 LINE",
+    });
+    assert.equal(edited.contactInfo, "");
+    assert.equal(edited.contactNote, "要跟上一屆要 LINE");
   });
 
   it("07 補上廠商名稱後可以確認，狀態依原文重算", () => {
@@ -171,6 +199,8 @@ describe("待確認欄位標示", () => {
   it("07 標出廠商名稱；08 標出 Email 和日期；06 標出窗口", () => {
     assert.ok(flaggedFields(row("07")).has("廠商名稱"));
     assert.ok(flaggedFields(row("08")).has("Email"));
+    assert.ok(flaggedFields(row("08")).has("主要聯絡方式"));
+    assert.ok(!flaggedFields(row("05")).has("主要聯絡方式"));
     assert.ok(flaggedFields(row("08")).has("聯絡日期"));
     assert.ok(flaggedFields(row("06")).has("聯絡窗口"));
   });
@@ -180,7 +210,7 @@ describe("待確認欄位標示", () => {
 });
 
 describe("⑤舊資料暫存格式", () => {
-  it("接受和編輯的列轉成 32 欄，不匯入的列不會出現", () => {
+  it("接受和編輯的列轉成 35 欄，不匯入的列不會出現", () => {
     let actions: ReviewActions = {};
     actions = applyAction(rows, actions, row("05").rowNumber, "accepted");
     actions = applyAction(rows, actions, row("11").rowNumber, "accepted");
@@ -188,7 +218,7 @@ describe("⑤舊資料暫存格式", () => {
     const staging = stagingRowsFor(rows, actions, context);
     assert.equal(staging.length, 2);
     assert.ok(staging.every((cells) => cells.length === STAGING_COLUMNS.length));
-    assert.equal(STAGING_COLUMNS.length, 32);
+    assert.equal(STAGING_COLUMNS.length, 35);
     const stopColumn = STAGING_COLUMNS.indexOf("廠商停止聯絡");
     const dispositionColumn = STAGING_COLUMNS.indexOf("匯入處置");
     assert.equal(staging[1][stopColumn], "是");
