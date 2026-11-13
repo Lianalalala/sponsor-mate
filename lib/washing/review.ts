@@ -5,6 +5,7 @@
 // 不能只相信瀏覽器送來的確認結果。
 
 import { cleanDate } from "./date.ts";
+import { MERGE_DECISIONS, type MergeDecision } from "./duplicates.ts";
 import { cleanEmail } from "./email.ts";
 import {
   cleanVendorName,
@@ -69,7 +70,8 @@ export function editDefaults(row: WashedRow): RowEdit {
 
 /**
  * 編輯後重新檢查：用和清洗時同一套規則重算這一列。
- * 疑似重複群組維持原本的分組（合併決定不在這一步），停止聯絡標記只能保留、不能被編輯拿掉。
+ * 疑似重複群組維持原本的分組，停止聯絡標記只能保留、不能被編輯拿掉。
+ * 同組其他列的建議可能跟著改變，所以呼叫端要再對整份資料跑一次 refreshDuplicates。
  */
 export function recheckRow(row: WashedRow, edit: RowEdit): WashedRow {
   const vendorName = cleanVendorName(edit.vendorName);
@@ -149,16 +151,37 @@ export function reviewProgress(rows: WashedRow[], actions: ReviewActions): Revie
   return progress;
 }
 
+/** 疑似重複群組代號 → 公關長選的合併決定；沒有出現＝還沒決定 */
+export type MergeDecisions = Partial<Record<string, MergeDecision>>;
+
+/** 設定或清除（decision 為 undefined）某一組的合併決定；不認得的群組或選項會被忽略 */
+export function applyMergeDecision(
+  rows: WashedRow[],
+  decisions: MergeDecisions,
+  group: string,
+  decision: MergeDecision | undefined,
+): MergeDecisions {
+  if (!rows.some((row) => row.duplicateGroup === group)) return decisions;
+  if (decision !== undefined && !(MERGE_DECISIONS as readonly string[]).includes(decision)) return decisions;
+  const next = { ...decisions };
+  if (decision === undefined) delete next[group];
+  else next[group] = decision;
+  return next;
+}
+
 /** 已確認的列轉成⑤舊資料暫存的 32 欄（STAGING_COLUMNS 的順序）。阻擋的列一律不會出現。 */
 export function stagingRowsFor(
   rows: WashedRow[],
   actions: ReviewActions,
   context: StagingContext,
+  mergeDecisions: MergeDecisions = {},
 ): StagingCell[][] {
   return rows
     .filter((row) => {
       const action = actions[row.rowNumber];
       return (action === "accepted" || action === "edited") && canConfirm(row);
     })
-    .map((row) => toStagingRow(row, context));
+    .map((row) =>
+      toStagingRow(row, context, row.duplicateGroup ? (mergeDecisions[row.duplicateGroup] ?? null) : null),
+    );
 }

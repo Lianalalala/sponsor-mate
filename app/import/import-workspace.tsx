@@ -6,10 +6,12 @@
 
 import { useState, type FormEvent } from "react";
 
+import { MERGE_DECISIONS, type DuplicateAnalysis, type MergeDecision } from "@/lib/washing/duplicates";
 import type { ImportDisposition, WashField, WashedRow } from "@/lib/washing/pipeline";
 import {
   ACTION_LABEL,
   applyAction,
+  applyMergeDecision,
   bulkAcceptTargets,
   canConfirm,
   countByDisposition,
@@ -19,11 +21,12 @@ import {
   recheckRow,
   reviewProgress,
   stagingRowsFor,
+  type MergeDecisions,
   type ReviewActions,
   type ReviewField,
   type RowEdit,
 } from "@/lib/washing/review";
-import { IMPORT_DISPOSITIONS } from "@/lib/washing/pipeline";
+import { IMPORT_DISPOSITIONS, refreshDuplicates } from "@/lib/washing/pipeline";
 import { STAGING_COLUMNS } from "@/lib/washing/staging";
 
 import {
@@ -150,6 +153,7 @@ function ReviewStep({
 }) {
   const [rows, setRows] = useState<WashedRow[]>(output.rows);
   const [actions, setActions] = useState<ReviewActions>({});
+  const [mergeDecisions, setMergeDecisions] = useState<MergeDecisions>({});
   const [batch] = useState(newBatch);
 
   const counts = countByDisposition(rows);
@@ -161,7 +165,7 @@ function ReviewStep({
     sourceName: fileName,
     createdAt: batch.createdAt,
     createdBy: userEmail,
-  });
+  }, mergeDecisions);
 
   const excludedBlank = output.excluded.filter((row) => row.reason === "blank_row").length;
   const excludedSame = output.excluded.filter((row) => row.reason === "exact_duplicate").length;
@@ -183,7 +187,10 @@ function ReviewStep({
   /** 編輯後重新檢查；通過才標成「已編輯並確認」，沒通過就維持未處理 */
   function saveEdit(original: WashedRow, edit: RowEdit): WashedRow {
     const rechecked = recheckRow(original, edit);
-    const nextRows = rows.map((row) => (row.rowNumber === original.rowNumber ? rechecked : row));
+    // 改了名稱或 Email，同組的建議可能跟著變，所以整份重新分析
+    const nextRows = refreshDuplicates(
+      rows.map((row) => (row.rowNumber === original.rowNumber ? rechecked : row)),
+    );
     setRows(nextRows);
     setActions((current) =>
       applyAction(nextRows, current, original.rowNumber, canConfirm(rechecked) ? "edited" : undefined),
@@ -229,7 +236,7 @@ function ReviewStep({
 
       {output.missingRows.length > 0 && (
         <p role="alert" className="mt-4 border-l-4 border-[#E0A100] bg-white px-4 py-3">
-          AI 漏掉了第 {output.missingRows.join("、")} 列，窗口和贊助內容沒有拆開。可以回去改欄位再清洗一次。
+          AI 漏掉了第 {output.missingRows.join("、")} 列，窗口和贊助內容沒有拆開。可以回去改欄位再整理一次。
         </p>
       )}
 
@@ -246,10 +253,17 @@ function ReviewStep({
         {sections.map((section) =>
           section.duplicateGroup ? (
             <div key={section.duplicateGroup} className="border-2 border-[#E0A100] bg-[#FFF8E1]">
-              <p className="px-4 py-2 font-medium text-[#3B2D00]">
-                疑似重複 {section.duplicateGroup}：這 {section.rows.length} 筆可能是同一家廠商。系統不會自動合併，
-                之後在⑤舊資料暫存決定要不要合併。
-              </p>
+              <MergeQuestion
+                group={section.duplicateGroup}
+                count={section.rows.length}
+                analysis={section.rows[0].duplicate}
+                decision={mergeDecisions[section.duplicateGroup]}
+                onDecide={(decision) =>
+                  setMergeDecisions((current) =>
+                    applyMergeDecision(rows, current, section.duplicateGroup!, decision),
+                  )
+                }
+              />
               <div className="space-y-px bg-[#E0A100]">
                 {section.rows.map((row) => (
                   <RowCard
@@ -357,6 +371,72 @@ function comparisons(row: WashedRow, headers: string[], fields: (WashField | "")
   ];
 }
 
+function MergeQuestion({
+  group,
+  count,
+  analysis,
+  decision,
+  onDecide,
+}: {
+  group: string;
+  count: number;
+  analysis: DuplicateAnalysis | null;
+  decision: MergeDecision | undefined;
+  onDecide: (decision: MergeDecision | undefined) => void;
+}) {
+  return (
+    <fieldset className="px-4 py-3 text-[#3B2D00]">
+      <legend className="sr-only">疑似重複 {group} 的合併決定</legend>
+      <p className="text-lg font-semibold">
+        疑似重複 {group}：這 {count} 筆要合併嗎？
+      </p>
+      {analysis && (
+        <>
+          <ul className="mt-1 list-disc pl-5 text-[15px]">
+            {analysis.evidence.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+          {analysis.suggestion && (
+            <p className="mt-1 text-[15px]">
+              建議：<span className="font-medium">{analysis.suggestion}</span>（只是建議，要你選了才算）
+            </p>
+          )}
+          {analysis.mismatchedFields.length > 0 && (
+            <p className="mt-1 text-[15px]">
+              欄位不一致：<span className="font-medium">{analysis.mismatchedFields.join("、")}</span>
+              （每筆都保留自己的值，不會替你挑）
+            </p>
+          )}
+        </>
+      )}
+      <div className="mt-2 flex flex-wrap gap-2">
+        {MERGE_DECISIONS.map((option) => {
+          const selected = decision === option;
+          return (
+            <button
+              key={option}
+              type="button"
+              aria-pressed={selected}
+              onClick={() => onDecide(selected ? undefined : option)}
+              className={`min-h-11 rounded border-2 px-3 text-[15px] font-medium ${
+                selected
+                  ? "border-[#0F5C73] bg-[#0F5C73] text-white"
+                  : "border-[#B88500] bg-white text-[#3B2D00] hover:bg-[#FFF3C4]"
+              }`}
+            >
+              {option}
+            </button>
+          );
+        })}
+      </div>
+      <p className="mt-1 text-sm">
+        {decision ? `已選「${decision}」，再按一次可以取消。` : "還沒決定（⑤的「合併決定」會是空白）。"}
+      </p>
+    </fieldset>
+  );
+}
+
 function RowCard({
   row,
   action,
@@ -447,7 +527,7 @@ function RowCard({
                     <td className="min-w-0 break-words py-1.5 pr-2 align-top text-[#5F7C86]">{raw || "（空白）"}</td>
                     <td aria-hidden="true" className="py-1.5 align-top text-[#8AA2AA]">→</td>
                     <td className="min-w-0 break-words py-1.5 align-top">
-                      <span className="font-medium">{value || <span className="font-normal text-[#8AA2AA]">留空</span>}</span>
+                      <span className="font-medium">{value}</span>
                       {note && <span className="ml-2 text-sm text-[#8A6100]">{note}</span>}
                     </td>
                   </tr>

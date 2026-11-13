@@ -120,7 +120,7 @@ export function useWashingUpload(apiBase: string) {
 
   async function wash() {
     if (!file || !analysis) return;
-    setBusy(`正在清洗 ${analysis.rowCount} 筆資料…`);
+    setBusy(`正在整理 ${analysis.rowCount} 筆資料…`);
     setError(null);
     try {
       const form = new FormData();
@@ -201,7 +201,7 @@ export function MappingStep({
         )}
       </div>
       <p className="mt-1 text-[#46636D]">
-        AI 已先對好每一欄，請看過再開始清洗。用不到的欄選「不匯入」。
+        AI 已先對好每一欄，請確認欄位對應是否正確。用不到的欄位選「不匯入」。
       </p>
 
       <div className="mt-5 divide-y divide-[#D3E2E7] bg-white">
@@ -247,7 +247,7 @@ export function MappingStep({
 
       <div className="mt-5 flex flex-wrap items-center gap-3">
         <button type="button" className={buttonPrimary} disabled={busy || missing.length > 0} onClick={onWash}>
-          開始清洗
+          開始整理
         </button>
         <button type="button" className={buttonQuiet} onClick={onReset}>
           換一個檔案
