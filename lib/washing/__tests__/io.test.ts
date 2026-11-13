@@ -195,9 +195,9 @@ describe("暫存列", () => {
   const cell = (row: (typeof washed)[number], column: (typeof STAGING_COLUMNS)[number]) =>
     toStagingRow(row, context)[STAGING_COLUMNS.indexOf(column)];
 
-  it("欄數與資料表⑤一致（32 欄）", () => {
-    assert.equal(STAGING_COLUMNS.length, 32);
-    assert.equal(toStagingRow(washed[0], context).length, 32);
+  it("欄數與資料表⑤一致（35 欄）", () => {
+    assert.equal(STAGING_COLUMNS.length, 35);
+    assert.equal(toStagingRow(washed[0], context).length, 35);
   });
 
   it("活動與合併一定留給公關長", () => {

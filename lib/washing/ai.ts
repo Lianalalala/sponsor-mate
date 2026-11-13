@@ -4,6 +4,7 @@
 
 import { generateText, jsonSchema, Output, type LanguageModel } from "ai";
 
+import { AI_CONTACT_METHODS } from "./contact.ts";
 import {
   EMPTY_INTERPRETATION,
   SPONSORSHIP_TYPES,
@@ -165,6 +166,10 @@ async function interpretBatch(
               type: "object",
               properties: {
                 rowNumber: { type: "integer" },
+                contactMethod: {
+                  anyOf: [{ type: "string", enum: [...AI_CONTACT_METHODS] }, { type: "null" }],
+                },
+                contactInfo: nullable("string"),
                 contactPerson: nullable("string"),
                 otherChannels: nullable("string"),
                 sponsorshipType: {
@@ -177,6 +182,8 @@ async function interpretBatch(
               },
               required: [
                 "rowNumber",
+                "contactMethod",
+                "contactInfo",
                 "contactPerson",
                 "otherChannels",
                 "sponsorshipType",
@@ -195,6 +202,8 @@ async function interpretBatch(
     }),
     system: [
       "你要拆開招商舊表裡混在同一格的內容，每一列都要回傳。",
+      "contactMethod：聯絡資料裡沒有完整 Email（含 @）時，判斷主要聯絡方式是哪一種（LINE、Messenger、IG、官網表單、電話、其他）；沒有 @ 的網址或網域較可能是官網表單，不要當成 Email。有完整 Email、或沒把握時填 null。",
+      "contactInfo：contactMethod 對應的聯絡資訊，照抄原文（例如 LINE ID、網址、電話號碼）；contactMethod 是 null 時也填 null。",
       "contactPerson：人名、職稱或部門窗口，照抄原文的字，不要加註解；沒有就 null。",
       "otherChannels：Email 以外的聯絡管道，例如 LINE、電話，照抄原文；沒有就 null。不要輸出 Email。",
       "cashNtd：現金金額，只填數字。item、quantity、unit：實物贊助的品項、數量、單位，照抄原文的字。",

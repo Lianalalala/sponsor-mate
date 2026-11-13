@@ -2,6 +2,7 @@
 // 舊表 → 排除空白列與完全相同的列 → 逐格清洗 → 找疑似重複 → 決定匯入處置。
 // 這裡不連任何外部服務，也不修改傳入的原始資料。
 
+import { checkContact, resolveContactMethod, type ContactMethod } from "./contact.ts";
 import { cleanDate, type CleanDate } from "./date.ts";
 import {
   analyzeDuplicateGroup,
@@ -45,9 +46,10 @@ export interface RawTable {
 }
 
 // 匯入處置（與資料表⑤「匯入處置」下拉選單一致，D-016）。規則都由程式計算：
-// 1. 缺廠商名稱，或沒有有效 Email → 阻擋正式匯入（補好資料、重新檢查通過才能確認）
+// 1. 缺廠商名稱，或不符合聯絡方式規則（contact.ts 的 checkContact，D-024）
+//    → 阻擋正式匯入（補好資料、重新檢查通過才能確認）
 // 2. 廠商要求停止聯絡 → 可暫存／禁止聯絡
-// 3. 疑似重複、舊狀態不能直接採用、窗口已換、數量或金額不確定 → 待人工覆核
+// 3. 疑似重複、主要聯絡方式待確認、舊狀態不能直接採用、窗口已換、數量或金額不確定 → 待人工覆核
 // 4. 其他 → 可暫存
 export const IMPORT_DISPOSITIONS = [
   "可暫存",
@@ -63,6 +65,14 @@ export interface WashedRow {
   raw: Record<string, string>;
   legacyId: string;
   vendorName: string | null;
+  /** 舊表的聯絡資料原文；判斷「完全沒有聯絡資訊」用 */
+  contactRaw: string;
+  /** 主要聯絡方式（D-024）；null＝待確認 */
+  contactMethod: ContactMethod | null;
+  /** 主要聯絡資訊；主要聯絡方式是 Email 時為空字串 */
+  contactInfo: string;
+  /** 聯絡備註，例如「要跟上一屆要 LINE」；清洗時是空的，由公關長填 */
+  contactNote: string;
   email: CleanEmail;
   date: CleanDate;
   eventLabel: string;
@@ -159,9 +169,11 @@ export type RowFacts = Omit<WashedRow, "disposition" | "reviewReasons" | "dataNo
 export function finalizeRow(facts: RowFacts): WashedRow {
   const blockReasons: string[] = [];
   if (!facts.vendorName) blockReasons.push("缺廠商名稱，不可建立正式廠商 ID");
-  if (!facts.email.value) blockReasons.push(`沒有有效 Email（${facts.email.note}）`);
+  const contact = checkContact(facts);
+  if (contact.block) blockReasons.push(contact.block);
 
   const reviewReasons: string[] = [];
+  if (contact.review) reviewReasons.push(contact.review);
   if (facts.duplicateGroup) {
     const suggestion = facts.duplicate?.suggestion;
     reviewReasons.push(
@@ -182,6 +194,10 @@ export function finalizeRow(facts: RowFacts): WashedRow {
   const dataNotes = facts.interpretationNotes.filter((note) => note !== UNCERTAIN_AMOUNT_NOTE);
   if (facts.date.check !== "valid" && facts.date.check !== "missing") dataNotes.push(facts.date.note);
   if (facts.vendorStopContact) dataNotes.push("廠商要求停止聯絡，禁止任何後續寄送");
+  const emailProblem = facts.email.check !== "valid" && facts.email.check !== "missing";
+  if (emailProblem && facts.contactMethod !== null && facts.contactMethod !== "Email") {
+    dataNotes.push(`Email ${facts.email.note}；要寄信前得先補好 Email`);
+  }
 
   let disposition: ImportDisposition;
   let reasons: string[];
@@ -253,11 +269,21 @@ export function washTable(
       raw[header] = cells[column] ?? "";
     });
 
+    const contactChoice = resolveContactMethod(
+      email,
+      guarded.value.contactMethod,
+      guarded.value.contactInfo,
+    );
+
     return {
       rowNumber,
       raw,
       legacyId: readField(cells, mapping, "legacyId"),
       vendorName,
+      contactRaw,
+      contactMethod: contactChoice.method,
+      contactInfo: contactChoice.info,
+      contactNote: "",
       email,
       date,
       eventLabel: readField(cells, mapping, "eventLabel"),
@@ -297,7 +323,16 @@ export function washTable(
 
 type DuplicateFacts = Pick<
   RowFacts,
-  "rowNumber" | "vendorName" | "email" | "eventLabel" | "interpretation" | "owner" | "date" | "duplicateGroup"
+  | "rowNumber"
+  | "vendorName"
+  | "email"
+  | "contactMethod"
+  | "contactInfo"
+  | "eventLabel"
+  | "interpretation"
+  | "owner"
+  | "date"
+  | "duplicateGroup"
 >;
 
 function duplicateMember(row: DuplicateFacts): DuplicateMember {
@@ -309,6 +344,8 @@ function duplicateMember(row: DuplicateFacts): DuplicateMember {
     email: row.email.value,
     eventLabel: row.eventLabel,
     compareFields: {
+      主要聯絡方式: row.contactMethod,
+      主要聯絡資訊: row.contactInfo,
       Email: row.email.value,
       聯絡窗口: interpretation.contactPerson,
       其他聯絡管道: interpretation.otherChannels,
