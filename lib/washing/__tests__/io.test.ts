@@ -204,7 +204,7 @@ describe("暫存列", () => {
     for (const row of washed) {
       assert.equal(cell(row, "對應活動ID"), "");
       assert.equal(cell(row, "合併決定"), "");
-      assert.equal(cell(row, "確認狀態"), "待確認");
+      assert.equal(cell(row, "確認狀態"), "待處理", "沒有在預覽頁處理過的列，在⑤是待處理");
     }
   });
 
