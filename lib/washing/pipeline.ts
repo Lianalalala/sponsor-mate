@@ -3,7 +3,12 @@
 // 這裡不連任何外部服務，也不修改傳入的原始資料。
 
 import { cleanDate, type CleanDate } from "./date.ts";
-import { findDuplicateGroups } from "./duplicates.ts";
+import {
+  analyzeDuplicateGroup,
+  findDuplicateGroups,
+  type DuplicateAnalysis,
+  type DuplicateMember,
+} from "./duplicates.ts";
 import { cleanEmail, type CleanEmail } from "./email.ts";
 import {
   EMPTY_INTERPRETATION,
@@ -70,6 +75,8 @@ export interface WashedRow {
   contactValidity: ContactValidity;
   interpretation: RowInterpretation;
   duplicateGroup: string | null;
+  /** 疑似重複群組的建議與證據（整組共用同一份）；不是疑似重複就是 null */
+  duplicate: DuplicateAnalysis | null;
   owner: string;
   /** 舊資料的「已寄」都不是 Gmail API 成功紀錄 */
   countsAsGmailSent: false;
@@ -156,7 +163,14 @@ export function finalizeRow(facts: RowFacts): WashedRow {
 
   const reviewReasons: string[] = [];
   if (facts.duplicateGroup) {
-    reviewReasons.push(`疑似重複（${facts.duplicateGroup}），需公關長確認才能合併`);
+    const suggestion = facts.duplicate?.suggestion;
+    reviewReasons.push(
+      suggestion
+        ? `疑似重複（${facts.duplicateGroup}），建議「${suggestion}」，需公關長決定`
+        : `疑似重複（${facts.duplicateGroup}），名稱不完全相同，需公關長決定要不要合併`,
+    );
+    const mismatched = facts.duplicate?.mismatchedFields ?? [];
+    if (mismatched.length > 0) reviewReasons.push(`同組欄位不一致：${mismatched.join("、")}`);
   }
   if (!facts.status.adoptable) {
     reviewReasons.push(`舊狀態不能直接採用：${facts.status.reason ?? facts.status.label}`);
@@ -271,9 +285,64 @@ export function washTable(
     })),
   );
 
-  const rows = partial.map((row) =>
-    finalizeRow({ ...row, duplicateGroup: groups.get(row.rowNumber) ?? null }),
-  );
+  const grouped = partial.map((row) => ({
+    ...row,
+    duplicateGroup: groups.get(row.rowNumber) ?? null,
+    duplicate: null as DuplicateAnalysis | null,
+  }));
+  const rows = withDuplicateAnalysis(grouped).map(finalizeRow);
 
   return { rows, excluded };
+}
+
+type DuplicateFacts = Pick<
+  RowFacts,
+  "rowNumber" | "vendorName" | "email" | "eventLabel" | "interpretation" | "owner" | "date" | "duplicateGroup"
+>;
+
+function duplicateMember(row: DuplicateFacts): DuplicateMember {
+  const { interpretation } = row;
+  const text = (value: string | number | null) => (value === null ? null : String(value));
+  return {
+    id: row.rowNumber,
+    vendorName: row.vendorName,
+    email: row.email.value,
+    eventLabel: row.eventLabel,
+    compareFields: {
+      Email: row.email.value,
+      聯絡窗口: interpretation.contactPerson,
+      其他聯絡管道: interpretation.otherChannels,
+      原負責人: row.owner,
+    },
+    sameEventFields: {
+      聯絡日期: row.date.iso,
+      現金金額: text(interpretation.cashNtd),
+      實物品項: interpretation.item,
+      實物數量: text(interpretation.quantity),
+      單位: interpretation.unit,
+    },
+  };
+}
+
+/** 依目前的資料重新分析每個疑似重複群組；群組本身不變，只更新建議、證據和不一致欄位 */
+export function withDuplicateAnalysis<T extends DuplicateFacts & { duplicate: DuplicateAnalysis | null }>(
+  rows: T[],
+): T[] {
+  const members = new Map<string, DuplicateMember[]>();
+  for (const row of rows) {
+    if (!row.duplicateGroup) continue;
+    members.set(row.duplicateGroup, [...(members.get(row.duplicateGroup) ?? []), duplicateMember(row)]);
+  }
+  const analyses = new Map(
+    [...members].map(([group, list]) => [group, analyzeDuplicateGroup(group, list)] as const),
+  );
+  return rows.map((row) => ({
+    ...row,
+    duplicate: row.duplicateGroup ? (analyses.get(row.duplicateGroup) ?? null) : null,
+  }));
+}
+
+/** 編輯某一列之後，同組其他列的建議也可能改變，所以整份重新分析、重算處置 */
+export function refreshDuplicates(rows: WashedRow[]): WashedRow[] {
+  return withDuplicateAnalysis(rows).map(finalizeRow);
 }

@@ -4,6 +4,7 @@
 // 寫入 Google Sheets 時必須用 valueInputOption: RAW，
 // 否則舊資料裡以 = 開頭的內容會被當成公式執行。
 
+import type { MergeDecision } from "./duplicates.ts";
 import type { WashedRow } from "./pipeline.ts";
 import type { ContactValidity } from "./status.ts";
 
@@ -60,8 +61,15 @@ const CONTACT_VALIDITY_LABEL: Record<ContactValidity, string> = {
 
 const yesNo = (value: boolean): string => (value ? "是" : "否");
 
-/** 依 STAGING_COLUMNS 的順序回傳一列 */
-export function toStagingRow(row: WashedRow, context: StagingContext): StagingCell[] {
+/**
+ * 依 STAGING_COLUMNS 的順序回傳一列。
+ * 「合併決定」填公關長在預覽頁選的（MERGE_DECISIONS），沒選就是空白；程式的建議只寫在「待確認原因」。
+ */
+export function toStagingRow(
+  row: WashedRow,
+  context: StagingContext,
+  mergeDecision: MergeDecision | null = null,
+): StagingCell[] {
   const { interpretation } = row;
   const cells: Record<StagingColumn, StagingCell> = {
     暫存ID: `${context.batchId}-${row.rowNumber}`,
@@ -90,7 +98,7 @@ export function toStagingRow(row: WashedRow, context: StagingContext): StagingCe
     實物數量: interpretation.quantity ?? "",
     單位: interpretation.unit ?? "",
     疑似重複群組: row.duplicateGroup ?? "",
-    合併決定: "",
+    合併決定: row.duplicateGroup ? (mergeDecision ?? "") : "",
     原負責人: row.owner,
     原始資料: JSON.stringify(row.raw),
     確認狀態: "待確認",
