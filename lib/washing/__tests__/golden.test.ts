@@ -98,20 +98,40 @@ describe("驗收規則", () => {
     assert.equal(byLegacyId("03").email.value, "hello@example.com");
   });
 
-  it("T-11 缺廠商名稱無法寫入", () => {
-    assert.equal(byLegacyId("07").disposition, "無法寫入");
+  it("分流結果 7／2／1／2（Task 頁 11/9 Step 2 的 A 表）", () => {
+    const byDisposition = (label: string) =>
+      result.rows.filter((row) => row.disposition === label).map((row) => row.legacyId);
+    assert.deepEqual(byDisposition("待人工覆核"), ["01", "02", "03", "04", "06", "10", "12"]);
+    assert.deepEqual(byDisposition("可暫存"), ["05", "09"]);
+    assert.deepEqual(byDisposition("可暫存／禁止聯絡"), ["11"]);
+    assert.deepEqual(byDisposition("阻擋正式匯入"), ["07", "08"]);
   });
 
-  it("T-10 沒有可用 Email 仍可寫入，但留空並留下紀錄", () => {
+  it("T-03、T-04 疑似重複只分組，不合併：12 筆都還在", () => {
+    assert.equal(result.rows.length, 12);
+    assert.equal(byLegacyId("01").duplicateGroup, byLegacyId("02").duplicateGroup);
+    assert.equal(byLegacyId("03").duplicateGroup, byLegacyId("04").duplicateGroup);
+    assert.notEqual(byLegacyId("01").duplicateGroup, byLegacyId("03").duplicateGroup);
+    assert.equal(byLegacyId("02").vendorName, "全家");
+  });
+
+  it("T-11 缺廠商名稱：阻擋正式匯入", () => {
+    const row = byLegacyId("07");
+    assert.equal(row.disposition, "阻擋正式匯入");
+    assert.ok(row.reviewReasons.some((reason) => reason.includes("缺廠商名稱")));
+  });
+
+  it("T-10 沒有有效 Email：阻擋正式匯入，不補 @", () => {
     const row = byLegacyId("08");
-    assert.equal(row.disposition, "可寫入");
+    assert.equal(row.disposition, "阻擋正式匯入");
     assert.equal(row.email.value, null);
-    assert.ok(row.dataNotes.some((note) => note.includes("缺@")));
+    assert.ok(row.reviewReasons.some((reason) => reason.includes("缺@")));
   });
 
-  it("需要處理的只有疑似重複和缺廠商名稱", () => {
-    const needsHuman = result.rows.filter((row) => row.reviewReasons.length > 0);
-    assert.deepEqual(needsHuman.map((row) => row.legacyId), ["01", "02", "03", "04", "07"]);
+  it("T-13 停止聯絡是廠商層級，處置會標出來", () => {
+    const row = byLegacyId("11");
+    assert.equal(row.vendorStopContact, true);
+    assert.equal(row.disposition, "可暫存／禁止聯絡");
   });
 
   it("T-12 活動層級的拒絕不會擴大成廠商層級", () => {

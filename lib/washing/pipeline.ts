@@ -39,13 +39,19 @@ export interface RawTable {
   firstDataRowNumber?: number;
 }
 
-// 只有疑似重複和缺廠商名稱需要人處理；其他狀況照寫入，問題記在 dataNotes，
-// 沒有 Email、舊窗口這類問題由寄前檢核擋下。
-export type ImportDisposition =
-  | "可寫入"
-  | "可寫入／禁止聯絡"
-  | "待確認合併"
-  | "無法寫入";
+// 匯入處置（與資料表⑤「匯入處置」下拉選單一致，D-016）。規則都由程式計算：
+// 1. 缺廠商名稱，或沒有有效 Email → 阻擋正式匯入（補好資料、重新檢查通過才能確認）
+// 2. 廠商要求停止聯絡 → 可暫存／禁止聯絡
+// 3. 疑似重複、舊狀態不能直接採用、窗口已換、數量或金額不確定 → 待人工覆核
+// 4. 其他 → 可暫存
+export const IMPORT_DISPOSITIONS = [
+  "可暫存",
+  "可暫存／禁止聯絡",
+  "待人工覆核",
+  "阻擋正式匯入",
+] as const;
+
+export type ImportDisposition = (typeof IMPORT_DISPOSITIONS)[number];
 
 export interface WashedRow {
   rowNumber: number;
@@ -55,6 +61,8 @@ export interface WashedRow {
   email: CleanEmail;
   date: CleanDate;
   eventLabel: string;
+  /** 舊表的狀態原文；重新檢查時用來重算 status */
+  statusRaw: string;
   /** 舊活動不自動對應到現行活動，由幹部之後指定 */
   officialEventId: null;
   status: StatusResult;
@@ -65,10 +73,12 @@ export interface WashedRow {
   owner: string;
   /** 舊資料的「已寄」都不是 Gmail API 成功紀錄 */
   countsAsGmailSent: false;
+  /** AI 拆解結果被防呆捨棄或標為不確定的紀錄 */
+  interpretationNotes: string[];
   disposition: ImportDisposition;
-  /** 需要公關長處理的原因 */
+  /** 決定這個處置的原因（阻擋或需要人工覆核的理由） */
   reviewReasons: string[];
-  /** 不擋寫入、但資料上有問題的紀錄 */
+  /** 不影響處置、但資料上有問題的紀錄 */
   dataNotes: string[];
 }
 
@@ -114,19 +124,68 @@ function readField(row: string[], mapping: ColumnMapping, field: WashField): str
     .join("；");
 }
 
-function cleanVendorName(raw: string): string | null {
+export function cleanVendorName(raw: string): string | null {
   const name = raw.replace(/[​-‍﻿]/g, "").trim();
   return name === "" || /^[-—–]+$/.test(name) ? null : name;
 }
 
-function decideDisposition(input: {
-  vendorName: string | null;
-  vendorStopContact: boolean;
-  duplicateGroup: string | null;
-}): ImportDisposition {
-  if (!input.vendorName) return "無法寫入";
-  if (input.duplicateGroup) return "待確認合併";
-  return input.vendorStopContact ? "可寫入／禁止聯絡" : "可寫入";
+/** 舊狀態 → ③的狀態候選。沒有廠商名稱時，任何狀態都不能直接採用。 */
+export function deriveStatus(
+  statusRaw: string,
+  vendorName: string | null,
+  vendorStopContact: boolean,
+): StatusResult {
+  const base = interpretStatus(statusRaw);
+  return {
+    ...base,
+    adoptable: base.adoptable && vendorName !== null,
+    decision: vendorStopContact ? "停止追蹤" : base.decision,
+  };
+}
+
+const UNCERTAIN_AMOUNT_NOTE = "原文的數量或金額不確定，需人工確認";
+
+/** 處置相關欄位以外的部分；重新檢查時只會改到 finalizeRow 算出來的欄位 */
+export type RowFacts = Omit<WashedRow, "disposition" | "reviewReasons" | "dataNotes">;
+
+/** 依 RowFacts 算出匯入處置與理由。洗整張表和「編輯後重新檢查」共用這一份規則。 */
+export function finalizeRow(facts: RowFacts): WashedRow {
+  const blockReasons: string[] = [];
+  if (!facts.vendorName) blockReasons.push("缺廠商名稱，不可建立正式廠商 ID");
+  if (!facts.email.value) blockReasons.push(`沒有有效 Email（${facts.email.note}）`);
+
+  const reviewReasons: string[] = [];
+  if (facts.duplicateGroup) {
+    reviewReasons.push(`疑似重複（${facts.duplicateGroup}），需公關長確認才能合併`);
+  }
+  if (!facts.status.adoptable) {
+    reviewReasons.push(`舊狀態不能直接採用：${facts.status.reason ?? facts.status.label}`);
+  }
+  if (facts.contactValidity === "replaced") reviewReasons.push("窗口已更換，需取得新窗口");
+  const uncertainAmount = facts.interpretationNotes.includes(UNCERTAIN_AMOUNT_NOTE);
+  if (uncertainAmount) reviewReasons.push(UNCERTAIN_AMOUNT_NOTE);
+
+  const dataNotes = facts.interpretationNotes.filter((note) => note !== UNCERTAIN_AMOUNT_NOTE);
+  if (facts.date.check !== "valid" && facts.date.check !== "missing") dataNotes.push(facts.date.note);
+  if (facts.vendorStopContact) dataNotes.push("廠商要求停止聯絡，禁止任何後續寄送");
+
+  let disposition: ImportDisposition;
+  let reasons: string[];
+  if (blockReasons.length > 0) {
+    disposition = "阻擋正式匯入";
+    reasons = [...blockReasons, ...reviewReasons];
+  } else if (facts.vendorStopContact) {
+    disposition = "可暫存／禁止聯絡";
+    reasons = reviewReasons;
+  } else if (reviewReasons.length > 0) {
+    disposition = "待人工覆核";
+    reasons = reviewReasons;
+  } else {
+    disposition = "可暫存";
+    reasons = [];
+  }
+
+  return { ...facts, disposition, reviewReasons: reasons, dataNotes };
 }
 
 export function washTable(
@@ -172,14 +231,8 @@ export function washTable(
       contactRaw,
       sponsorshipRaw,
     );
-    const baseStatus = interpretStatus(statusRaw);
     const vendorStopContact = detectStopContact(statusRaw, notesRaw);
-
-    const status: StatusResult = {
-      ...baseStatus,
-      adoptable: baseStatus.adoptable && vendorName !== null,
-      decision: vendorStopContact ? "停止追蹤" : baseStatus.decision,
-    };
+    const status = deriveStatus(statusRaw, vendorName, vendorStopContact);
 
     const raw: Record<string, string> = {};
     table.headers.forEach((header, column) => {
@@ -194,6 +247,7 @@ export function washTable(
       email,
       date,
       eventLabel: readField(cells, mapping, "eventLabel"),
+      statusRaw,
       officialEventId: null,
       status,
       vendorStopContact,
@@ -205,7 +259,7 @@ export function washTable(
       interpretation: guarded.value,
       owner: readField(cells, mapping, "owner"),
       countsAsGmailSent: false as const,
-      guardReasons: guarded.reviewReasons,
+      interpretationNotes: guarded.reviewReasons,
     };
   });
 
@@ -217,31 +271,9 @@ export function washTable(
     })),
   );
 
-  const rows: WashedRow[] = partial.map(({ guardReasons, ...row }) => {
-    const duplicateGroup = groups.get(row.rowNumber) ?? null;
-    const reviewReasons: string[] = [];
-    if (!row.vendorName) reviewReasons.push("缺廠商名稱，不可建立正式廠商 ID");
-    if (duplicateGroup) reviewReasons.push(`疑似重複（${duplicateGroup}），需幹部確認才能合併`);
-
-    const dataNotes = [...guardReasons];
-    if (row.email.check !== "valid") dataNotes.push(row.email.note);
-    if (row.date.check !== "valid" && row.date.check !== "missing") dataNotes.push(row.date.note);
-    if (row.contactValidity === "replaced") dataNotes.push("窗口已更換，需取得新窗口");
-    if (row.status.reason) dataNotes.push(row.status.reason);
-    if (row.vendorStopContact) dataNotes.push("廠商要求停止聯絡，禁止任何後續寄送");
-
-    return {
-      ...row,
-      duplicateGroup,
-      reviewReasons,
-      dataNotes,
-      disposition: decideDisposition({
-        vendorName: row.vendorName,
-        vendorStopContact: row.vendorStopContact,
-        duplicateGroup,
-      }),
-    };
-  });
+  const rows = partial.map((row) =>
+    finalizeRow({ ...row, duplicateGroup: groups.get(row.rowNumber) ?? null }),
+  );
 
   return { rows, excluded };
 }

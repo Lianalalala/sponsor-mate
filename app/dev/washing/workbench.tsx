@@ -1,152 +1,27 @@
 "use client";
 
-import { useState, type ChangeEvent } from "react";
+import type { ImportDisposition, WashedRow } from "@/lib/washing/pipeline";
 
-import type {
-  ColumnMapping,
-  ExcludedRow,
-  ImportDisposition,
-  WashField,
-  WashedRow,
-} from "@/lib/washing/pipeline";
-
-// 只匯入型別，AI 與讀檔的程式不會進到瀏覽器
-
-interface MappingSuggestion {
-  mapping: ColumnMapping;
-  uncertainColumns: number[];
-  unmappedColumns: number[];
-}
-
-interface Analysis {
-  fileName: string;
-  sheetNames: (string | null)[];
-  sheetIndex: number;
-  headers: string[];
-  rowCount: number;
-  samples: string[][];
-  suggestion: MappingSuggestion;
-}
-
-interface WashOutput {
-  headers: string[];
-  rows: WashedRow[];
-  excluded: ExcludedRow[];
-  missingRows: number[];
-}
-
-const FIELD_OPTIONS: { field: WashField; label: string }[] = [
-  { field: "vendorName", label: "廠商名稱" },
-  { field: "contact", label: "聯絡方式" },
-  { field: "contactDate", label: "聯絡日期" },
-  { field: "status", label: "聯絡狀況" },
-  { field: "sponsorship", label: "贊助內容" },
-  { field: "eventLabel", label: "活動" },
-  { field: "owner", label: "負責人" },
-  { field: "notes", label: "備註" },
-  { field: "legacyId", label: "舊表編號" },
-];
-
-const REQUIRED_FIELDS: { field: WashField; label: string }[] = [
-  { field: "vendorName", label: "廠商名稱" },
-];
+import {
+  buttonQuiet,
+  MappingStep,
+  PickFile,
+  useWashingUpload,
+  type WashOutput,
+} from "../../import/upload-steps";
 
 const DISPOSITIONS: Record<ImportDisposition, { strip: string; badge: string }> = {
-  無法寫入: { strip: "bg-[#B3261E]", badge: "bg-[#B3261E] text-white" },
-  待確認合併: { strip: "bg-[#E0A100]", badge: "bg-[#FFD667] text-[#3B2D00]" },
-  "可寫入／禁止聯絡": { strip: "bg-[#3A2A5E]", badge: "bg-[#3A2A5E] text-white" },
-  可寫入: { strip: "bg-[#2E8B6F]", badge: "bg-[#CDEEDF] text-[#0E4A38]" },
+  阻擋正式匯入: { strip: "bg-[#B3261E]", badge: "bg-[#B3261E] text-white" },
+  待人工覆核: { strip: "bg-[#E0A100]", badge: "bg-[#FFD667] text-[#3B2D00]" },
+  "可暫存／禁止聯絡": { strip: "bg-[#3A2A5E]", badge: "bg-[#3A2A5E] text-white" },
+  可暫存: { strip: "bg-[#2E8B6F]", badge: "bg-[#CDEEDF] text-[#0E4A38]" },
 };
 
 const STEPS = ["放進舊資料", "確認欄位", "檢查結果"];
 
-const buttonPrimary =
-  "rounded-md bg-[#0F5C73] px-5 py-2.5 font-medium text-white hover:bg-[#0B4A5D] disabled:cursor-not-allowed disabled:bg-[#9DB4BC] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0F5C73]";
-const buttonQuiet =
-  "rounded-md px-3 py-2 text-[#0F5C73] underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-[#0F5C73]";
-
-async function postForm<T>(url: string, form: FormData): Promise<T> {
-  const response = await fetch(url, { method: "POST", body: form });
-  const body = (await response.json().catch(() => null)) as { error?: string } | null;
-  if (!response.ok) throw new Error(body?.error ?? "處理時發生錯誤，請再試一次");
-  return body as T;
-}
-
-function fieldsFromSuggestion(analysis: Analysis): (WashField | "")[] {
-  const fields: (WashField | "")[] = analysis.headers.map(() => "");
-  for (const [field, columns] of Object.entries(analysis.suggestion.mapping)) {
-    for (const column of columns ?? []) fields[column] = field as WashField;
-  }
-  return fields;
-}
-
-function toMapping(fields: (WashField | "")[]): ColumnMapping {
-  const mapping: ColumnMapping = {};
-  fields.forEach((field, column) => {
-    if (field) mapping[field] = [...(mapping[field] ?? []), column];
-  });
-  return mapping;
-}
-
 export default function WashingWorkbench() {
-  const [file, setFile] = useState<File | null>(null);
-  const [analysis, setAnalysis] = useState<Analysis | null>(null);
-  const [fields, setFields] = useState<(WashField | "")[]>([]);
-  const [output, setOutput] = useState<WashOutput | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const step = output ? 2 : analysis ? 1 : 0;
-
-  function reset() {
-    setFile(null);
-    setAnalysis(null);
-    setFields([]);
-    setOutput(null);
-    setError(null);
-  }
-
-  async function analyze(target: File, sheetIndex: number) {
-    setBusy("正在讀檔，請 AI 判斷每一欄的用途…");
-    setError(null);
-    try {
-      const form = new FormData();
-      form.set("file", target);
-      form.set("sheetIndex", String(sheetIndex));
-      const result = await postForm<Analysis>("/api/dev/washing/analyze", form);
-      setAnalysis(result);
-      setFields(fieldsFromSuggestion(result));
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "處理時發生錯誤，請再試一次");
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  function onPickFile(event: ChangeEvent<HTMLInputElement>) {
-    const picked = event.target.files?.[0];
-    event.target.value = "";
-    if (!picked) return;
-    setFile(picked);
-    void analyze(picked, 0);
-  }
-
-  async function wash() {
-    if (!file || !analysis) return;
-    setBusy(`正在清洗 ${analysis.rowCount} 筆資料…`);
-    setError(null);
-    try {
-      const form = new FormData();
-      form.set("file", file);
-      form.set("sheetIndex", String(analysis.sheetIndex));
-      form.set("mapping", JSON.stringify(toMapping(fields)));
-      setOutput(await postForm<WashOutput>("/api/dev/washing/run", form));
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "處理時發生錯誤，請再試一次");
-    } finally {
-      setBusy(null);
-    }
-  }
+  const { file, analysis, fields, setFields, output, setOutput, busy, error, step, reset, analyze, onPickFile, wash } =
+    useWashingUpload("/api/dev/washing");
 
   return (
     <div className="min-h-screen bg-[#EAF3F5] text-[#14323C]">
@@ -207,130 +82,6 @@ export default function WashingWorkbench() {
   );
 }
 
-function PickFile({ onPickFile }: { onPickFile: (event: ChangeEvent<HTMLInputElement>) => void }) {
-  return (
-    <div className="relative mt-8 border-2 border-dashed border-[#7FA6B3] bg-white hover:border-[#0F5C73] has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-[#0F5C73]">
-      <input
-        type="file"
-        accept=".xlsx,.csv"
-        aria-label="選擇舊資料檔案"
-        onChange={onPickFile}
-        className="absolute inset-0 cursor-pointer opacity-0"
-      />
-      <div className="px-6 py-20 text-center">
-        <p className="text-xl font-medium">把舊的招商名單拖到這裡，或點一下選擇檔案</p>
-        <p className="mt-2 text-[#46636D]">支援 .xlsx 和 .csv，檔案上限 4 MB</p>
-      </div>
-    </div>
-  );
-}
-
-function MappingStep({
-  analysis,
-  fields,
-  setFields,
-  busy,
-  onChangeSheet,
-  onWash,
-  onReset,
-}: {
-  analysis: Analysis;
-  fields: (WashField | "")[];
-  setFields: (fields: (WashField | "")[]) => void;
-  busy: boolean;
-  onChangeSheet: (index: number) => void;
-  onWash: () => void;
-  onReset: () => void;
-}) {
-  const missing = REQUIRED_FIELDS.filter(({ field }) => !fields.includes(field));
-  const { uncertainColumns } = analysis.suggestion;
-
-  return (
-    <section className="mt-8">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-xl font-semibold">
-          {analysis.fileName}，共 {analysis.rowCount} 列
-        </h2>
-        {analysis.sheetNames.length > 1 && (
-          <label className="flex items-center gap-2">
-            分頁
-            <select
-              value={analysis.sheetIndex}
-              disabled={busy}
-              onChange={(event) => onChangeSheet(Number(event.target.value))}
-              className="rounded-md border border-[#7FA6B3] bg-white px-2 py-1.5"
-            >
-              {analysis.sheetNames.map((name, index) => (
-                <option key={index} value={index}>
-                  {name ?? `分頁 ${index + 1}`}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-      </div>
-      <p className="mt-1 text-[#46636D]">
-        AI 已先對好每一欄，請看過再開始清洗。用不到的欄選「不匯入」。
-      </p>
-
-      <div className="mt-5 divide-y divide-[#D3E2E7] bg-white">
-        {analysis.headers.map((header, column) => {
-          const isUncertain = uncertainColumns.includes(column);
-          return (
-            <div
-              key={column}
-              className="grid gap-x-6 gap-y-2 px-4 py-3 md:grid-cols-[12rem_1fr_11rem] md:items-center"
-            >
-              <p className="font-medium">
-                {header || `第 ${column + 1} 欄（沒有欄名）`}
-                {isUncertain && (
-                  <span className="ml-2 rounded bg-[#FFD667] px-1.5 py-0.5 text-sm font-normal text-[#3B2D00]">
-                    待確認
-                  </span>
-                )}
-              </p>
-              <p className="min-w-0 truncate text-[15px] text-[#5F7C86]">
-                {analysis.samples[column].join("、") || "（這欄是空的）"}
-              </p>
-              <select
-                aria-label={`${header} 對應到`}
-                value={fields[column]}
-                onChange={(event) => {
-                  const next = [...fields];
-                  next[column] = event.target.value as WashField | "";
-                  setFields(next);
-                }}
-                className="rounded-md border border-[#7FA6B3] bg-white px-2 py-1.5 focus-visible:outline-2 focus-visible:outline-[#0F5C73]"
-              >
-                <option value="">不匯入</option>
-                {FIELD_OPTIONS.map(({ field, label }) => (
-                  <option key={field} value={field}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          );
-        })}
-      </div>
-
-      <div className="mt-5 flex flex-wrap items-center gap-3">
-        <button type="button" className={buttonPrimary} disabled={busy || missing.length > 0} onClick={onWash}>
-          開始清洗
-        </button>
-        <button type="button" className={buttonQuiet} onClick={onReset}>
-          換一個檔案
-        </button>
-        {missing.length > 0 && (
-          <p className="text-[#B3261E]">
-            還需要對應：{missing.map(({ label }) => label).join("、")}
-          </p>
-        )}
-      </div>
-    </section>
-  );
-}
-
 function ResultStep({
   output,
   fileName,
@@ -342,9 +93,9 @@ function ResultStep({
   onBack: () => void;
   onReset: () => void;
 }) {
-  const writable = output.rows.filter((row) => row.reviewReasons.length === 0);
-  const noName = output.rows.filter((row) => row.disposition === "無法寫入");
-  const duplicates = output.rows.filter((row) => row.disposition === "待確認合併");
+  const writable = output.rows.filter((row) => row.disposition.startsWith("可暫存"));
+  const noName = output.rows.filter((row) => row.disposition === "阻擋正式匯入");
+  const duplicates = output.rows.filter((row) => row.disposition === "待人工覆核");
   const pendingCount = noName.length + duplicates.length;
   const stopCount = output.rows.filter((row) => row.vendorStopContact).length;
 
@@ -370,7 +121,7 @@ function ResultStep({
       </div>
 
       <h2 className="mt-2 text-2xl font-semibold">
-        {writable.length} 筆廠商資料可以寫入
+        {writable.length} 筆可以暫存
         {pendingCount > 0 && `，剩餘 ${pendingCount} 筆待確認`}，共 {output.rows.length} 筆
       </h2>
 
@@ -393,7 +144,7 @@ function ResultStep({
 
       {duplicateGroups.length > 0 && (
         <div className="mt-8">
-          <h3 className="text-lg font-semibold">可能是同一家廠商</h3>
+          <h3 className="text-lg font-semibold">待人工覆核（疑似重複、狀態或窗口要確認）</h3>
           <div className="mt-2 space-y-3">
             {duplicateGroups.map((group) => (
               <ul key={group[0].rowNumber} className="divide-y divide-[#D3E2E7] border-l-[6px] border-[#E0A100] bg-white">
@@ -408,10 +159,10 @@ function ResultStep({
 
       {noName.length > 0 && (
         <div className="mt-8">
-          <h3 className="text-lg font-semibold">缺廠商名稱，無法寫入</h3>
+          <h3 className="text-lg font-semibold">阻擋正式匯入（缺廠商名稱或沒有有效 Email）</h3>
           <ul className="mt-2 divide-y divide-[#D3E2E7] border-l-[6px] border-[#B3261E] bg-white">
             {noName.map((row) => (
-              <PendingRow key={row.rowNumber} row={row} title="（沒有廠商名稱）" />
+              <PendingRow key={row.rowNumber} row={row} title={row.vendorName ?? "（沒有廠商名稱）"} />
             ))}
           </ul>
         </div>

@@ -191,9 +191,9 @@ describe("washTable", () => {
     assert.throws(() => washTable({ headers, rows: [] }, { contact: [1] }));
   });
 
-  it("資料很少的社團：只有廠商名稱也能洗", () => {
+  it("資料很少的社團：只有廠商名稱也能洗，但沒有 Email 會被阻擋", () => {
     const { rows } = washTable({ headers: ["店家"], rows: [["甲"], ["乙"]] }, { vendorName: [0] });
-    assert.deepEqual(rows.map((row) => row.disposition), ["可寫入", "可寫入"]);
+    assert.deepEqual(rows.map((row) => row.disposition), ["阻擋正式匯入", "阻擋正式匯入"]);
     assert.equal(rows[0].email.value, null);
     assert.equal(rows[0].date.iso, null);
     assert.equal(rows[0].legacyId, "");
@@ -205,7 +205,7 @@ describe("washTable", () => {
     );
   });
 
-  it("AI 捨棄的內容不擋寫入，但留下紀錄", () => {
+  it("AI 捨棄的內容不影響處置，但留下紀錄", () => {
     const interpretations = new Map([
       [2, { ...EMPTY_INTERPRETATION, contactPerson: "憑空的人" }],
     ]);
@@ -214,7 +214,7 @@ describe("washTable", () => {
       { vendorName: [0], contact: [1], status: [2] },
       interpretations,
     );
-    assert.equal(rows[0].disposition, "可寫入");
+    assert.equal(rows[0].disposition, "可暫存");
     assert.ok(rows[0].dataNotes.some((note) => note.includes("已捨棄")));
   });
 });

@@ -6,6 +6,8 @@ import { Suspense } from "react";
 
 import { checkImportAccess } from "@/lib/current-member";
 
+import ImportWorkspace from "./import-workspace";
+
 export const metadata: Metadata = {
   title: "匯入舊資料",
   robots: { index: false },
@@ -27,7 +29,7 @@ async function ImportGate() {
     );
   }
 
-  return <p className="mt-6 text-[#46636D]">預覽頁建置中。</p>;
+  return <ImportWorkspace userEmail={access.user.email} />;
 }
 
 export default function ImportPage() {
