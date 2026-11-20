@@ -5,8 +5,10 @@ const nonblank = (value: unknown): value is string => typeof value === "string" 
 
 // 只比較規則真正使用的欄位。相同證據重複出現不重算；矛盾證據交人工核對。
 function signature(mail: MailRecord): string {
+  // 有效時間比較實際時刻；無效時間保留原值，不能把不同錯誤都當成 null。
+  const sentAt = parseInstant(mail.sentAt) ?? mail.sentAt;
   return JSON.stringify([mail.clubId, mail.correspondenceId, mail.eventId, mail.direction,
-    mail.kind, mail.status, mail.sentAt, mail.gmailMessageId]);
+    mail.kind, mail.status, sentAt, mail.gmailMessageId]);
 }
 
 function deduplicate(mails: readonly MailRecord[], issues: RuleIssue[]): MailRecord[] {

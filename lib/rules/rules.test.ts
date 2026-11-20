@@ -133,6 +133,85 @@ describe("成功寄件與初次邀約", () => {
   });
 });
 
+describe("時間去重（timestamp-dedup）", () => {
+  const utc = mail("utc", { sentAt: "2026-11-10T04:00:00Z" });
+  const taipei = { ...utc, id: "taipei", sentAt: "2026-11-10T12:00:00+08:00" };
+
+  it("相同 Message ID、同一時刻的 Z／+08:00 表示只計 1 次", () => {
+    // 同時涵蓋依信件 ID 及依 Message ID 去重，且不受紀錄順序影響。
+    for (const id of [utc.id, taipei.id]) {
+      const duplicate = { ...taipei, id };
+      for (const mails of [[utc, duplicate], [duplicate, utc]]) {
+        const history = countSuccessfulSends(input(mails));
+        assert.equal(history.successCount, 1);
+        assert.equal(history.followUpCount, 0);
+        assert.deepEqual(history.issues, []);
+        assert.equal(daysSinceLastSuccessfulSend({ ...input(mails), now }).daysSince, 3);
+        assert.equal(evaluateFollowUp(followUp({ mails })).recommended, true);
+        assert.equal(quota(mails).requiresReconciliation, false);
+      }
+    }
+  });
+
+  it("相同 Message ID 即使只差 1 秒，仍回報 conflicting_record", () => {
+    for (const id of [utc.id, taipei.id]) {
+      const different = { ...taipei, id, sentAt: "2026-11-10T12:00:01+08:00" };
+      for (const mails of [[utc, different], [different, utc]]) {
+        assert.ok(countSuccessfulSends(input(mails)).issues.some((i) => i.code === "conflicting_record"));
+        assert.equal(classifyInvitation(input(mails)).classification, "needs_review");
+        assert.equal(evaluateFollowUp(followUp({ mails })).recommended, false);
+        assert.equal(quota(mails).shouldPause, true);
+      }
+    }
+  });
+
+  for (const sentAt of [null, "bad", "2026-02-30T12:00:00Z"]) {
+    it(`相同 Message ID 的有效與無效時間不可視為一致：${sentAt}`, () => {
+      const invalid = { ...taipei, sentAt };
+      for (const mails of [[utc, invalid], [invalid, utc]]) {
+        assert.ok(countSuccessfulSends(input(mails)).issues.some((i) => i.code === "conflicting_record"));
+        assert.equal(classifyInvitation(input(mails)).classification, "needs_review");
+        assert.equal(evaluateFollowUp(followUp({ mails })).recommended, false);
+        assert.equal(quota(mails).requiresReconciliation, true);
+        assert.equal(quota(mails).shouldPause, true);
+      }
+    });
+  }
+
+  it("兩筆時間都無效時仍須核對，不因 parseInstant 都回 null 而放行", () => {
+    for (const [firstTime, secondTime] of [[null, null], ["bad", "bad"], ["bad", "other-bad"]]) {
+      const mails = [{ ...utc, sentAt: firstTime }, { ...taipei, sentAt: secondTime }];
+      assert.ok(countSuccessfulSends(input(mails)).issues.length > 0);
+      assert.equal(daysSinceLastSuccessfulSend({ ...input(mails), now }).daysSince, null);
+      assert.equal(evaluateFollowUp(followUp({ mails })).recommended, false);
+      assert.equal(quota(mails).shouldPause, true);
+      if (firstTime !== secondTime) {
+        assert.ok(countSuccessfulSends(input(mails)).issues.some((i) => i.code === "conflicting_record"));
+      }
+    }
+  });
+
+  it("29 封加一封使用兩種時區表示的重複紀錄，剛好達每日 30 封上限", () => {
+    const last = mail("last", { sentAt: "2026-11-13T01:00:00Z" });
+    const duplicate = { ...last, id: "last-duplicate", sentAt: "2026-11-13T09:00:00+08:00" };
+    const result = quota([...todayMails(29), last, duplicate]);
+    assert.equal(result.sentToday, 30);
+    assert.equal(result.remaining, 0);
+    assert.equal(result.requiresReconciliation, false);
+    assert.equal(result.shouldPause, true);
+    assert.deepEqual(result.reasons.map((r) => r.code), ["daily_limit"]);
+  });
+
+  it("實際時間相同也不能忽略寄送狀態或信件類型的矛盾", () => {
+    for (const duplicate of [{ ...taipei, status: "待確認" as const }, { ...taipei, kind: "催信" as const }]) {
+      const mails = [utc, duplicate];
+      assert.ok(countSuccessfulSends(input(mails)).issues.some((i) => i.code === "conflicting_record"));
+      assert.equal(evaluateFollowUp(followUp({ mails })).recommended, false);
+      assert.equal(quota(mails).shouldPause, true);
+    }
+  });
+});
+
 describe("社團、廠商、活動隔離", () => {
   const otherEvent: Correspondence = { ...correspondence, id: "relation-B", eventId: "event-B" };
   const otherVendor: Correspondence = { ...correspondence, id: "relation-C", vendorId: "vendor-B" };
