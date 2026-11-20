@@ -2,7 +2,12 @@
 // 這裡不讀環境變數、不保存 token，也不自動重試寫入。
 
 export type SheetCell = string | number | boolean;
-export type SheetsErrorCode = "invalid_input" | "authorization" | "request_failed" | "invalid_response";
+export type SheetsErrorCode =
+  | "invalid_input"
+  | "authorization"
+  | "request_failed"
+  | "invalid_response"
+  | "schema_mismatch";
 
 export class SheetsError extends Error {
   readonly code: SheetsErrorCode;

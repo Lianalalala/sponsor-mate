@@ -13,6 +13,29 @@ https://app.notion.com/p/3fb2685d187981b199e0cf6a5a3c0bd8
 - 寫入超時、連線中斷、5xx 或成功回應不完整時，回報 `writeOutcome: "unknown"`；
   先核對實際結果，不能直接重送。這不構成去重或跨請求的重入保護。
 
+## ⑤欄位核對
+
+`assertStagingHeaders(headers)` 會依 `STAGING_COLUMNS` 核對標題列的欄數、名稱與順序。
+缺欄、多欄、重複欄位、順序不同、名稱前後多出空白或欄名不是文字時，會拋出
+`SheetsError`（`code: "schema_mismatch"`、`writeOutcome: "not_attempted"`）。
+錯誤不保留原始儲存格內容，也不自動修正或重新排列欄位。
+
+DAL 取得已授權的 Sheets client 後，應先讀完整第一列（`'5. 舊資料暫存'!1:1`），
+以偵測 `AI` 之後多出的欄位，再進行核對：
+
+```ts
+import { assertStagingHeaders } from "@/lib/sheets";
+
+// sheets 是 DAL 完成授權後建立的 client。
+const headerRows = await sheets.readValues("'5. 舊資料暫存'!1:1");
+assertStagingHeaders(headerRows[0]);
+```
+
+這是供未來 DAL 使用的離線檢查函式，目前尚未接上網頁或實際寫入流程。
+呼叫端仍須在讀寫資料列前執行核對，並處理授權、版本檢查與併發控制。
+
+## 尚待串接
+
 接上公開 API 前必須完成：
 
 1. 驗證 session，依 D-020／D-021 從伺服器查出社團、角色和已授權的試算表綁定。
