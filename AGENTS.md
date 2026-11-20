@@ -34,7 +34,9 @@ Notion 工作區是最新狀態的唯一依據。實作功能或做技術選擇�
 ## 技術選型
 - Next.js（App Router，程式碼放根目錄 app/）、TypeScript、Tailwind CSS
 - 部署：Vercel（Hobby 方案），GitHub repo 為 public
-- 登入：Better Auth＋Google 登入，成員名單在環境變數（D-017）
+- 登入：Better Auth＋Google 登入（D-017）；成員名單、社團連接存 Neon Postgres，ORM 用 Kysely（D-020、D-021、D-026）
+- 社團帳號授權：refresh token 用 AES-256-GCM 加密後存 `club_connection`，不放 Better Auth 的 account 表（D-027）；
+  本機開發連 Neon 的 `dev` branch，不要對正式環境的 `main` 跑 `npm run db:migrate -- --apply`
 - AI：Vercel AI SDK，模型設定集中在 lib/ai/model.ts，只能在伺服器端使用（D-018）
 - 其他技術選擇（資料庫、Gmail 權限、模型）以團隊的 Notion 決策紀錄為準；
   不確定時先問使用者，不要自行決定
