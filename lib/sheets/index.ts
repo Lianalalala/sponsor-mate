@@ -7,6 +7,7 @@ export type { SheetCell, SheetsConnection } from "./transport.ts";
 export { assertStagingHeaders } from "./staging-schema.ts";
 export { readStagingRows, StagingColumnCountError } from "./staging-read.ts";
 export type { StagingReadClient, StagingSheetRow } from "./staging-read.ts";
+export { readPendingStagingRows } from "./staging-pending.ts";
 
 // 內部底層，沒有 Server Action 或公開 API。
 // 待社團 OAuth／Neon 綁定完成後，由 DAL 在驗證 session、社團及操作權限後建立。
