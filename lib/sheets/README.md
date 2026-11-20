@@ -34,6 +34,26 @@ assertStagingHeaders(headerRows[0]);
 這是供未來 DAL 使用的離線檢查函式，目前尚未接上網頁或實際寫入流程。
 呼叫端仍須在讀寫資料列前執行核對，並處理授權、版本檢查與併發控制。
 
+## ⑤內部唯讀
+
+`readStagingRows(sheets)` 接受已完成授權的 Sheets client，只讀取固定的⑤分頁。
+使用單次 `readValues("'5. 舊資料暫存'")` 回應中的標題與資料進行核對，
+不分成先讀標題、再讀資料的兩次請求；完整分頁範圍也可偵測 `AI` 後多出的欄位。
+
+- 標題須符合現有 35 欄規格；資料列超過 35 欄時，回報第一個異常列的
+  `StagingColumnCountError`，保留 `schema_mismatch` 錯誤代碼並暫停本次讀取。
+  錯誤額外提供 `rowNumber`、`expectedColumns`、`actualColumns`，例如
+  「⑤舊資料暫存第 5 列有 36 欄，預期 35 欄，請核對試算表。」；不包含儲存格內容。
+- 排除第 1 列標題與第 2 列說明，從第 3 列開始回傳 `{ rowNumber, values }`。
+- 保留中間空列、實際列號、儲存格型別及 Google 省略尾端空白格的形式。
+  `values` 是副本，後續編輯不會改動原始回應。
+- HTTP 讀取失敗會傳遞既有錯誤，不當作空資料表，也不自動重試或寫入。
+
+此函式只提供內部的原始列讀取；尚未解碼或篩選「待處理」紀錄，也未接上網頁。
+社團 OAuth、session／社團／角色驗證、說明列內容與版本檢查及併發控制仍待串接。
+一次讀取的回應不代表已取得鎖定或完成版本檢查。⑤含原始資料，呼叫端不得直接將完整回應
+公開給一般成員；應從 `lib/sheets/index.ts` 的 `server-only` 入口使用。
+
 ## 尚待串接
 
 接上公開 API 前必須完成：
@@ -58,3 +78,4 @@ Google 官方 API 參考：
 
 - https://developers.google.com/workspace/sheets/api/reference/rest/v4/spreadsheets.values/get
 - https://developers.google.com/workspace/sheets/api/reference/rest/v4/spreadsheets.values/append
+- https://developers.google.com/workspace/sheets/api/guides/concepts#cell
