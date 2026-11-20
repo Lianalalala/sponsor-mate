@@ -6,7 +6,7 @@ import { STAGING_COLUMNS } from "../../washing/staging.ts";
 
 // 只有離線 placeholder；不使用真實 OAuth 憑證或真實試算表 ID。
 const spreadsheetId = "offline-sheet";
-const range = "'5. 舊資料暫存'!A1:AF";
+const range = "'5. 舊資料暫存'!A3:AI";
 const json = (value: unknown, status = 200) => Response.json(value, { status });
 
 function client(fetcher: typeof fetch, getAccessToken = async () => "offline-placeholder") {
@@ -46,9 +46,10 @@ describe("Sheets HTTP 讀寫底層（完全離線）", () => {
     assert.deepEqual(await client(async () => json({ range })).readValues(range), []);
   });
 
-  it("32 欄原文使用 RAW 新增，保留公式樣式字串，並只回報結果摘要", async () => {
-    const rows: SheetCell[][] = [STAGING_COLUMNS.map(() => "")];
-    rows[0][7] = '=HYPERLINK("https://example.invalid", "舊資料")';
+  it("35 欄原文使用 RAW 完整新增，保留公式樣式字串，並只回報結果摘要", async () => {
+    const rows: SheetCell[][] = [STAGING_COLUMNS.map((column) =>
+      column === "廠商名稱" ? '=HYPERLINK("https://example.invalid", "舊資料")' : `原文：${column}`,
+    )];
     const sheets = client(async (input, init) => {
       const url = new URL(String(input));
       assert.ok(url.pathname.endsWith(":append"));
@@ -56,11 +57,13 @@ describe("Sheets HTTP 讀寫底層（完全離線）", () => {
       assert.equal(url.searchParams.get("insertDataOption"), "INSERT_ROWS");
       assert.equal(url.searchParams.get("includeValuesInResponse"), "false");
       assert.equal(init?.method, "POST");
-      assert.deepEqual(JSON.parse(String(init?.body)), { range, majorDimension: "ROWS", values: rows });
-      return json({ spreadsheetId, updates: { updatedRange: "'5. 舊資料暫存'!A3:AF3", updatedRows: 1 } });
+      const body = JSON.parse(String(init?.body));
+      assert.equal(body.values[0].length, 35);
+      assert.deepEqual(body, { range, majorDimension: "ROWS", values: rows });
+      return json({ spreadsheetId, updates: { updatedRange: "'5. 舊資料暫存'!A3:AI3", updatedRows: 1 } });
     });
     assert.deepEqual(await sheets.appendRows(range, rows), {
-      updatedRange: "'5. 舊資料暫存'!A3:AF3", updatedRows: 1,
+      updatedRange: "'5. 舊資料暫存'!A3:AI3", updatedRows: 1,
     });
   });
 
