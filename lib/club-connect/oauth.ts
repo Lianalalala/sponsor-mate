@@ -65,6 +65,11 @@ const MESSAGES: Record<ClubConnectErrorCode, string> = {
   email_not_verified: "這個 Google 帳號的 email 還沒驗證，請換一個已驗證的社團帳號",
 };
 
+/** 給畫面顯示用的固定訊息 */
+export function clubConnectErrorMessage(code: ClubConnectErrorCode): string {
+  return MESSAGES[code];
+}
+
 export class ClubConnectError extends Error {
   readonly code: ClubConnectErrorCode;
 

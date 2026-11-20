@@ -36,7 +36,10 @@ export default async function LoginStatus({
   if (!user.role) {
     return (
       <div className="mt-6">
-        <p>{user.email} 不在成員名單裡，請聯絡你們社團的公關長。</p>
+        <p>
+          {user.email} 不在成員名單裡，請聯絡你們社團的公關長。如果你是公關長，可以到
+          <Link href="/" className="text-[#0F5C73] underline">首頁</Link>連接社團帳號。
+        </p>
         <SignOutButton />
       </div>
     );
