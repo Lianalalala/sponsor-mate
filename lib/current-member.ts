@@ -1,25 +1,32 @@
-// 取得目前登入的人和他的角色。權限判斷一律走這裡，
+// 取得目前登入的人、他屬於哪個社團、是什麼角色。權限判斷一律走這裡，
 // Better Auth 文件提醒只看 cookie 存不存在並不安全，要驗證 session。
 // 只能在伺服器端 import。
 //
-// 角色的資料來源目前是環境變數（lib/members.ts）；之後搬到資料庫（D-021）時，
-// 只要換掉 roleForUser 的資料來源，下面的權限規則不用改。
+// 角色來自資料庫的成員名單（lib/members-db.ts，D-021）；下面的權限規則跟資料來源無關。
 
 import { getAuth, isAuthConfigured } from "./auth.ts";
-import { roleForUser, type MemberRole } from "./members.ts";
+import { dbMemberDirectory } from "./members-db.ts";
+import { membershipForUser, type MemberDirectory, type MemberRole } from "./members.ts";
 
 export interface CurrentUser {
   email: string;
   name: string;
+  /** 不在名單上時為 null */
+  clubId: string | null;
+  /** 不在名單上、或 Email 未驗證時為 null */
   role: MemberRole | null;
 }
 
-export async function getCurrentUser(requestHeaders: Headers): Promise<CurrentUser | null> {
+export async function getCurrentUser(
+  requestHeaders: Headers,
+  directory: MemberDirectory = dbMemberDirectory(),
+): Promise<CurrentUser | null> {
   if (!isAuthConfigured()) return null;
   const session = await getAuth().api.getSession({ headers: requestHeaders });
   if (!session) return null;
   const { email, name, emailVerified } = session.user;
-  return { email, name, role: roleForUser({ email, emailVerified }) };
+  const membership = await membershipForUser({ email, emailVerified }, directory);
+  return { email, name, clubId: membership?.clubId ?? null, role: membership?.role ?? null };
 }
 
 export type ImportAccess =
@@ -33,7 +40,7 @@ export type ImportAccess =
  */
 export function importAccessFor(user: CurrentUser | null): ImportAccess {
   if (!user) return { allowed: false, status: 401, reason: "not_signed_in" };
-  if (user.role !== "pr_lead") return { allowed: false, status: 403, reason: "not_pr_lead" };
+  if (user.role !== "pr_lead" || !user.clubId) return { allowed: false, status: 403, reason: "not_pr_lead" };
   return { allowed: true, user };
 }
 

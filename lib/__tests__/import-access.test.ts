@@ -2,20 +2,25 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { importAccessFor, type CurrentUser } from "../current-member.ts";
-import { roleForUser } from "../members.ts";
+import { createMemoryDirectory, membershipForUser } from "../members.ts";
 import { washingEndpoint } from "../washing/http.ts";
 
-// 用和正式環境一樣的 roleForUser 決定角色，只是名單換成測試用的
-const env = { PR_LEAD_EMAILS: "lead@example.com", MEMBER_EMAILS: "member@example.com" };
+// 用和正式環境一樣的 membershipForUser 決定角色，只是名單換成記憶體裡的測試名單
+const CLUB = "11111111-1111-4111-8111-111111111111";
+const directory = createMemoryDirectory([
+  { email: "lead@example.com", clubId: CLUB, role: "pr_lead" },
+  { email: "member@example.com", clubId: CLUB, role: "member" },
+]);
 
-function userFor(email: string, emailVerified = true): CurrentUser {
-  return { email, name: "測試", role: roleForUser({ email, emailVerified }, env) };
+async function userFor(email: string, emailVerified = true): Promise<CurrentUser> {
+  const membership = await membershipForUser({ email, emailVerified }, directory);
+  return { email, name: "測試", clubId: membership?.clubId ?? null, role: membership?.role ?? null };
 }
 
-const LEAD = userFor("lead@example.com");
-const MEMBER = userFor("member@example.com");
-const STRANGER = userFor("stranger@example.com");
-const UNVERIFIED_LEAD = userFor("lead@example.com", false);
+const LEAD = await userFor("lead@example.com");
+const MEMBER = await userFor("member@example.com");
+const STRANGER = await userFor("stranger@example.com");
+const UNVERIFIED_LEAD = await userFor("lead@example.com", false);
 
 /** 模擬一個清洗 API；handlerCalls 記錄 handler（讀檔、呼叫 AI 的地方）有沒有被執行 */
 function fakeEndpoint(user: CurrentUser | null) {
@@ -46,6 +51,13 @@ describe("匯入舊資料的權限（importAccessFor）", () => {
   });
   it("沒登入被擋下（401）", () => {
     assert.deepEqual(importAccessFor(null), { allowed: false, status: 401, reason: "not_signed_in" });
+  });
+  it("角色是公關長但沒有所屬社團（不該發生）也擋下", () => {
+    assert.equal(importAccessFor({ ...LEAD, clubId: null }).allowed, false);
+  });
+  it("公關長通過時帶出所屬社團", () => {
+    const access = importAccessFor(LEAD);
+    assert.equal(access.allowed && access.user.clubId, CLUB);
   });
 });
 
