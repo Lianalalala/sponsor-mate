@@ -88,6 +88,89 @@ Google 官方 API 參考：
 - https://developers.google.com/workspace/sheets/api/reference/rest/v4/spreadsheets/batchUpdate
 - https://developers.google.com/workspace/sheets/api/reference/rest/v4/spreadsheets/request#SetDataValidationRequest
 
+## 建表流程核心（離線接口）
+
+`provisionClubSpreadsheet(deps)` 位於 `provisioning.ts`，只使用注入的身分、儲存、
+token 與建表接口。它不讀環境變數、不自行發 HTTP、不連 Neon，也不實作資料庫 schema。
+目前沒有正式 adapter、公開 API／Server Action 或 `index.ts` 匯出，尚未接上產品流程。
+此檔案供內部邏輯與 Node 離線測試使用；正式接線仍須經 `server-only` 邊界，不能由前端匯入。
+
+### 身分與執行順序
+
+1. `getActor()` 必須由後端驗證 Session 及成員資格，提供 `clubId`、`role`。
+   核心只接受有社團的 `pr_lead`；未登入、未驗證 Email 對應的空角色、組員或缺少社團都停止。
+   這個型別不是認證機制，不能採用前端自報的社團、角色或核准旗標。
+   未來可從 `club-connect` 的 `getCurrentUser(headers)` 映射，不從 main 現有環境變數名單推定社團。
+2. 讀取已授權社團的狀態。已有正式 ID 直接回傳；進行中、待核對或矛盾資料都不建立。
+3. 取得社團 access token。未來以閉包接入
+   `getClubTokenProvider().getAccessToken(clubId)`；provider 是 null 或取得失敗時停止，
+   不建立作業、不清除授權。個人登入的 token 不能代用。
+4. `reserve(clubId)` 原子重查狀態；只有已持久化取得資格的 `reserved` 回應才能建表。
+   社團名稱採用此時後端提供的值，不採用前端值或較早讀取的快照。
+5. 建表成功後先保存已知 ID（`stage: "save"`），再完成正式綁定。
+   初始化錯誤若帶 ID，先保存該 ID 與原始階段，再標記待核對，不能呼叫完成綁定。
+
+所有外部例外只轉成固定代碼，不把原始例外、token、Google 回應或社團名稱放進結果或日誌。
+角色／社團資格由可信後端提供，核心的身分判斷不能取代正式登入與權限驗證。
+
+### 與 Liana 的抽象儲存契約
+
+以下為本次確認的核心邊界，**不是宣稱 Liana 的正式 Neon adapter 已完成**。
+方法名稱及型別由 adapter 映射，不指定資料表、欄位、SQL 或 migration。
+正式接線前須由雙方確認 adapter 符合全部語意；權限及操作人資訊由伺服器閉包提供。
+
+| 方法 | 契約 |
+| --- | --- |
+| `readState(clubId)` | 回傳社團名稱、正式 ID、作業識別／狀態／已知 ID。只有社團不存在才回 null；失敗必須 reject，不能裝成空資料 |
+| `reserve(clubId)` | 原子回傳 `existing`、`reserved`、`in_progress` 或 `needs_review`；`reserved` 包含社團、作業識別與社團名稱，必須先確認資格已提交 |
+| `recordKnownId(clubId, operationId, spreadsheetId, stage)` | 保存已知 ID 與 `create／initialize／save` 階段；只更新相符作業，不覆寫不同 ID |
+| `complete(clubId, operationId, spreadsheetId)` | 原子完成作業與 `club.spreadsheet_id` 綁定；同一作業、同一 ID 可重複確認；只有確認提交才 resolve |
+| `markNeedsReview(clubId, operationId, reason)` | 保留未決作業與已知 ID，不降級已完成作業；這個更新失敗時，原本的作業資格仍須阻擋重建 |
+
+`readState` 的 `spreadsheetId` 是正式綁定；`operation.spreadsheetId` 是作業已知 ID，
+可能仍是半成品，不能據此當成 ready。尚無作業紀錄時明確傳 `operation: null`。
+已完成作業的 ID 必須與正式綁定一致；未決作業不能同時宣稱已有正式綁定。
+未知或缺漏的狀態、跨社團回應均停止，不當成「尚未建立」。
+
+取得資格後的每次寫入都須核對 `clubId + operationId`；拒絕跨社團、不同 ID 或已被取代的作業。
+Promise fulfilled 必須表示確認提交，不能把資料庫錯誤吞掉或未確認的更新包成成功。
+資格取得、綁定唯一性、跨程序互斥、重啟後的作業紀錄、權限及人工解除暫停都由正式 adapter 保證。
+核心沒有記憶體鎖、資格釋放、背景重試或恢復入口；未決資格不能靠逾時自動釋放後重新建表。
+
+### 回傳與失敗處理
+
+| `status` | 意義 |
+| --- | --- |
+| `ready` | 已有正式綁定，或本次已確認完成；`source` 為 `existing／created` |
+| `blocked` | 身分、狀態讀取、社團或 token 不符合要求；尚未開始建表 |
+| `in_progress` | 已有未完成作業，不能另建 |
+| `needs_review` | 結果不明、半成品或保存未確認，須由授權恢復流程核對 |
+
+- `reserve` 拋錯後只讀回，不再次取得資格或建立；即使讀回看似空白，也不假設先前交易未提交。
+- `complete` 拋錯後只讀回；僅同一社團、同一作業、同一 ID 確認完成才回 ready，
+  不再呼叫 Google 或 complete。讀不到或不一致時保留待核對。
+- `recordKnownId` 拋錯後也先讀回，不重寫 ID 或接著呼叫 complete。
+  只有本次 Google 初始化已完成，且同一作業、同一 ID 已確認完成綁定才回 ready；
+  其餘在後端結果保留已知 ID 並待核對，不重建或刪檔。
+  `reviewRecorded: false` 表示連待核對寫入都未確認（或未取得可用的作業回應），不能當成資格已釋放。
+- 取得資格後，即使是 `not_attempted／rejected`，本核心也只分類並保留待核對；
+  是否可解除資格交由正式恢復流程確認，不自行決定重試規則。
+- Google 建立檔案與 Neon 交易無法由本核心一起回滾，不宣稱 exactly-once 或必定能自動恢復。
+  現有建表函式只在成功回傳或拋出帶 ID 的例外後交出 ID；若程序中斷於其內部，
+  必須靠原本持久化的資格阻擋重建，再人工核對，不能保證當下已保存半成品 ID。
+
+### 離線驗證與分工
+
+`__tests__/provisioning.test.ts` 使用虛構身分、假 token provider、共享 Map 模擬儲存，
+並以假的 HTTP 回應接既有建表函式。涵蓋權限、已有 ID、重複／同時請求、
+保留回應遺失、半成品、保存失敗、提交結果不明、跨社團與安全錯誤結果。
+重新建立依賴仍讀到假作業的測試，只驗證核心不因本機實例重建而忽略儲存層。
+**共享 Map 不驗收真正跨程序持久化、PostgreSQL transaction 或 Neon 併發。**
+
+- 蘇：本檔契約、provisioning 核心與離線流程測試。
+- Liana：Neon 原子保留、持久化、作業／ID 綁定檢查、失敗恢復與正式資料庫測試。
+- 雙方：確認正式 adapter、接上 Session／token／建表入口及受控 E2E；本次尚未進行。
+
 ## ⑤欄位核對
 
 `assertStagingHeaders(headers)` 會依 `STAGING_COLUMNS` 核對標題列的欄數、名稱與順序。
