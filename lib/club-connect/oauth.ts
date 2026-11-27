@@ -292,6 +292,67 @@ export function readIdToken(
   return { email: email.trim().toLowerCase(), subject: sub };
 }
 
+// ───────────────────────── 用 refresh token 換 access token ─────────────────────────
+
+/**
+ * 換 access token 的結果。不拋錯，讓呼叫端依原因決定要不要清掉 token：
+ * - revoked：Google 回 invalid_grant（社團撤銷授權、測試模式約 7 天到期、密碼變更等），refresh token 已經沒用
+ * - missing_scopes：換到了，但寄信或 Drive 權限不見了
+ * - temporary：網路、Google 5xx、格式不對等，refresh token 可能還有效，不能清掉
+ */
+export type RefreshResult =
+  | { ok: true; accessToken: string; expiresInSeconds: number }
+  | { ok: false; reason: "revoked" | "missing_scopes" | "temporary" };
+
+export async function refreshAccessToken(
+  input: { refreshToken: string; clientId: string; clientSecret: string },
+  fetcher: typeof fetch,
+): Promise<RefreshResult> {
+  let response: Response;
+  try {
+    response = await postForm(fetcher, TOKEN_ENDPOINT, {
+      grant_type: "refresh_token",
+      refresh_token: input.refreshToken,
+      client_id: input.clientId,
+      client_secret: input.clientSecret,
+    });
+  } catch {
+    return { ok: false, reason: "temporary" };
+  }
+
+  let body: Record<string, unknown> | null = null;
+  try {
+    const parsed: unknown = await response.json();
+    if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+      body = parsed as Record<string, unknown>;
+    }
+  } catch {
+    body = null;
+  }
+
+  if (!response.ok) {
+    // 只看 error 這個代碼，不讀、不保留 Google 回應的其他內容
+    if (response.status === 400 && body?.error === "invalid_grant") return { ok: false, reason: "revoked" };
+    return { ok: false, reason: "temporary" };
+  }
+  if (!body) return { ok: false, reason: "temporary" };
+
+  const { access_token, expires_in, scope } = body;
+  if (typeof access_token !== "string" || access_token === "" || /[^\x21-\x7e]/u.test(access_token)) {
+    return { ok: false, reason: "temporary" };
+  }
+  if (typeof expires_in !== "number" || !Number.isFinite(expires_in) || expires_in <= 0) {
+    return { ok: false, reason: "temporary" };
+  }
+  // Google 換 token 時會回傳目前的權限；有給就檢查，沒給就沿用連接時已檢查過的結果
+  if (scope !== undefined) {
+    if (typeof scope !== "string") return { ok: false, reason: "temporary" };
+    const scopes = scope.split(" ").filter(Boolean);
+    if (!REQUIRED_SCOPES.every((s) => scopes.includes(s))) return { ok: false, reason: "missing_scopes" };
+  }
+  return { ok: true, accessToken: access_token, expiresInSeconds: expires_in };
+}
+
 /**
  * 撤銷剛拿到但不能用的授權（例如權限不完整），讓社團帳號不會留著一份沒用的授權。
  * 盡力而為：失敗只回傳 false，不拋錯，也不記錄 token。

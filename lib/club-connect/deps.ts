@@ -7,6 +7,7 @@ import { getEncryptionKey } from "../crypto/secret-box.ts";
 import { getDb } from "../db/index.ts";
 import { dbMemberDirectory } from "../members-db.ts";
 import { membershipForUser } from "../members.ts";
+import { createClubTokenProvider, dbClubTokenStore, type ClubTokenProvider } from "./access-token.ts";
 import { completeConnection, isGoogleAccountConnected } from "./complete.ts";
 import type { ClubConnectConfig, ConnectDeps } from "./flow.ts";
 
@@ -45,4 +46,24 @@ export function createConnectDeps(): ConnectDeps | null {
     fetcher: (...args) => fetch(...args),
     now: () => Date.now(),
   };
+}
+
+let tokenProvider: ClubTokenProvider | undefined;
+
+/**
+ * 社團 access token 的正式接線（access-token.ts）。設定不齊時回傳 null。
+ * 整個伺服器共用同一個，記憶體暫存才有效；呼叫端要先確認操作的人屬於這個社團。
+ */
+export function getClubTokenProvider(): ClubTokenProvider | null {
+  const config = readClubConnectConfig();
+  if (!config) return null;
+  tokenProvider ??= createClubTokenProvider({
+    store: dbClubTokenStore(getDb()),
+    key: config.key,
+    clientId: config.clientId,
+    clientSecret: config.clientSecret,
+    fetcher: (...args) => fetch(...args),
+    now: () => Date.now(),
+  });
+  return tokenProvider;
 }
