@@ -6,6 +6,7 @@ import { describe, it } from "node:test";
 
 import {
   completeConnection,
+  connectedClubSummary,
   isGoogleAccountConnected,
   reasonForUniqueViolation,
   type CompleteConnectionInput,
@@ -195,5 +196,19 @@ describe("社團帳號是否已連接（isGoogleAccountConnected，決定能不�
 
     const fresh = setup();
     assert.equal(await isGoogleAccountConnected(fresh.db, "club.account@gmail.com"), false);
+  });
+});
+
+describe("首頁連接完成訊息要用的社團資料（connectedClubSummary）", () => {
+  it("用社團ID 查社團名稱和社團 Google 帳號", async () => {
+    const { db, queries } = createFakeDb(() => [{ name: "台大熱舞社", google_email: "club.account@gmail.com" }]);
+    assert.deepEqual(await connectedClubSummary(db, NEW_CLUB), { name: "台大熱舞社", googleEmail: "club.account@gmail.com" });
+    assert.match(queries[0].sql, /from "club" inner join "club_connection" on "club_connection"\."club_id" = "club"\."id" where "club"\."id" = \$1/);
+    assert.deepEqual(queries[0].parameters, [NEW_CLUB]);
+  });
+
+  it("沒有連接紀錄 → null", async () => {
+    const { db } = createFakeDb(() => []);
+    assert.equal(await connectedClubSummary(db, NEW_CLUB), null);
   });
 });

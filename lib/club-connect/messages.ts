@@ -34,12 +34,22 @@ const OAUTH_CODES: readonly ClubConnectErrorCode[] = [
 
 export type ConnectNotice = { kind: "success" | "error"; message: string };
 
-export function connectNotice(params: {
-  connect?: string | string[];
-  connect_error?: string | string[];
-}): ConnectNotice | null {
+/** 剛連接好的社團；由伺服器依登入者的社團ID 查資料庫，不採用網址上的內容 */
+export interface ConnectedClub {
+  name: string;
+  googleEmail: string;
+}
+
+export function connectNotice(
+  params: {
+    connect?: string | string[];
+    connect_error?: string | string[];
+  },
+  club: ConnectedClub | null = null,
+): ConnectNotice | null {
   if (params.connect === "ok") {
-    return { kind: "success", message: "社團帳號連接完成，你現在是這個社團的公關長。" };
+    const target = club ? `${club.name}（${club.googleEmail}）` : "這個社團";
+    return { kind: "success", message: `社團帳號連接完成，你現在是${target}的公關長。` };
   }
   const code = params.connect_error;
   if (typeof code !== "string") return null;

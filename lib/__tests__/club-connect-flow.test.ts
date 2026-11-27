@@ -339,8 +339,18 @@ describe("完成連接（GET /api/club/connect/callback）", () => {
 // ───────────────────────── 首頁訊息 ─────────────────────────
 
 describe("首頁的連接結果訊息（connectNotice）", () => {
-  it("成功", () => {
-    assert.equal(connectNotice({ connect: "ok" })?.kind, "success");
+  it("成功：顯示社團名稱和社團 Google 帳號", () => {
+    assert.deepEqual(connectNotice({ connect: "ok" }, { name: "台大熱舞社", googleEmail: "club@gmail.com" }), {
+      kind: "success",
+      message: "社團帳號連接完成，你現在是台大熱舞社（club@gmail.com）的公關長。",
+    });
+  });
+
+  it("成功但查不到社團 → 通用訊息", () => {
+    assert.deepEqual(connectNotice({ connect: "ok" }), {
+      kind: "success",
+      message: "社團帳號連接完成，你現在是這個社團的公關長。",
+    });
   });
 
   it("認得的錯誤代碼 → 固定訊息", () => {

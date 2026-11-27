@@ -103,6 +103,20 @@ export async function completeConnection(
   }
 }
 
+/** 首頁「連接完成」訊息用：社團名稱和連接的社團 Google 帳號；沒有連接紀錄時回傳 null */
+export async function connectedClubSummary(
+  db: Kysely<Database>,
+  clubId: string,
+): Promise<{ name: string; googleEmail: string } | null> {
+  const row = await db
+    .selectFrom("club")
+    .innerJoin("club_connection", "club_connection.club_id", "club.id")
+    .select(["club.name", "club_connection.google_email"])
+    .where("club.id", "=", clubId)
+    .executeTakeFirst();
+  return row ? { name: row.name, googleEmail: row.google_email } : null;
+}
+
 /**
  * 這個社團 Google 帳號是不是已經連接了某個社團。
  * 用來決定能不能撤銷剛拿到的 token：Google 撤銷是以「我們的 App＋那個帳號」為單位，

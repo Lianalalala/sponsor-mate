@@ -3,15 +3,22 @@ import Link from "next/link";
 import { Suspense } from "react";
 
 import { CLUB_NAME_MAX_LENGTH } from "@/lib/club-name";
+import { connectedClubSummary } from "@/lib/club-connect/complete";
 import { connectNotice } from "@/lib/club-connect/messages";
 import { getCurrentUser, importAccessFor } from "@/lib/current-member";
+import { getDb } from "@/lib/db";
 
 // 首頁的功能入口依角色顯示。只隱藏入口不算權限控管：
 // /import 頁面和 /api/import/*、/api/club/connect/* 在伺服器端都會再檢查一次。
 async function Entries({ searchParams }: { searchParams: PageProps<"/">["searchParams"] }) {
   const [user, params] = await Promise.all([getCurrentUser(await headers()), searchParams]);
-  // 只認得固定的代碼，網址上的其他內容不會顯示在畫面上
-  const notice = connectNotice(params);
+  // 只認得固定的代碼，網址上的其他內容不會顯示在畫面上。
+  // 社團名稱和社團帳號依登入者自己的社團ID 查資料庫，不從網址拿；查不到就用原本的通用訊息
+  const club =
+    params.connect === "ok" && user?.clubId
+      ? await connectedClubSummary(getDb(), user.clubId).catch(() => null)
+      : null;
+  const notice = connectNotice(params, club);
 
   return (
     <>
