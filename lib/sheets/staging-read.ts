@@ -1,5 +1,6 @@
 import { STAGING_COLUMNS } from "../washing/staging.ts";
 import { assertStagingHeaders } from "./staging-schema.ts";
+import { SHEET_NAMES } from "./schema.ts";
 import { SheetsError, type SheetCell } from "./transport.ts";
 
 export interface StagingReadClient {
@@ -31,7 +32,7 @@ export class StagingColumnCountError extends SheetsError {
  */
 export async function readStagingRows(client: StagingReadClient): Promise<StagingSheetRow[]> {
   // 固定⑤分頁，讀取完整欄位以偵測 AI 之後多出的標題或資料。
-  const table = await client.readValues("'5. 舊資料暫存'");
+  const table = await client.readValues(`'${SHEET_NAMES.staging}'`);
   assertStagingHeaders(table[0]);
 
   const dataRows = table.slice(2);
